@@ -1,0 +1,9 @@
+# Chuan hoa line ending ve LF cho moi text file, tranh xung dot CRLF/LF khi
+# clone/build cheo giua macOS va Windows (git tu convert khi checkout/commit).
+* text=auto eol=lf
+
+# File nhi phan, khong convert line ending
+*.bin binary
+*.png binary
+*.jpg binary
+*.ttf binary

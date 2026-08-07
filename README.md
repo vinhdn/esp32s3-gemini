@@ -63,6 +63,10 @@ idf.py build
 idf.py -p /dev/tty.usbserial-XXXX flash monitor   # doi dung cong USB, hoac bo -p de idf.py tu do
 ```
 
+Trên **Windows**, thay `/dev/tty.usbserial-XXXX` bằng cổng `COMx` (xem trong
+Device Manager) — xem hướng dẫn chi tiết + các lỗi thường gặp tại
+[`docs/BUILD_WINDOWS.md`](docs/BUILD_WINDOWS.md).
+
 ## Lần đầu sử dụng
 
 1. Cấp nguồn cho board. Nếu chưa từng cấu hình WiFi, board sẽ phát một SoftAP tên
