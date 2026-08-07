@@ -1,0 +1,35 @@
+# Target: ESP32-S3
+CONFIG_IDF_TARGET="esp32s3"
+
+# PSRAM la bat buoc: JSON + base64 audio buffer cho Gemini Live can nhieu RAM.
+# TODO: doi sang Octal neu module la ...R8 (vd N16R8); Quad neu la ...R2/R8-Q.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_QUAD=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# Flash size - TODO: doi theo module that (4MB/8MB/16MB)
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# TLS cho WebSocket wss:// toi Gemini Live API
+CONFIG_MBEDTLS_SSL_PROTO_TLS1_3=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+
+# esp_websocket_client can buffer lon hon mac dinh vi frame JSON audio kha to
+CONFIG_WS_TRANSPORT=y
+
+# Stack lon hon cho cac task xu ly JSON/base64/audio
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_FREERTOS_HZ=1000
+
+# LVGL qua managed component - dung mac dinh cua esp_lvgl_port
+
+# Log level mac dinh, bat verbose khi debug provisioning/gemini
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# Bat WiFi AP+STA dong thoi khong bat buoc (chi can khi provisioning), giu mac dinh IDF.
