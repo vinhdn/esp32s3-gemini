@@ -46,7 +46,13 @@
 #define BOARD_I2C_PIN_SDA        GPIO_NUM_7
 #define BOARD_I2C_PIN_SCL        GPIO_NUM_6
 #define BOARD_I2C_FREQ_HZ        100000
-#define BOARD_ES8311_I2C_ADDR    0x18   // ES8311_CODEC_DEFAULT_ADDR (7-bit)
+// QUAN TRONG: khong phai 0x18 (dia chi 7-bit "sach giao khoa" cua ES8311).
+// Component espressif/esp_codec_dev dinh nghia ES8311_CODEC_DEFAULT_ADDR =
+// 0x30 (xem managed_components/espressif__esp_codec_dev/device/include/es8311_codec.h)
+// va audio_codec_i2c_cfg_t.addr phai khop gia tri nay, neu khong ES8311 se
+// khong ACK bat ky giao dich I2C nao (da xac nhan qua log that: "Fail to
+// write to dev 18" lap lai lien tuc -> es8311_codec_new that bai -> abort).
+#define BOARD_ES8311_I2C_ADDR    0x30
 
 // ---- I2S (du lieu audio den/di ES8311) -------------------------------------
 // I2S full-duplex: 1 bo MCLK/BCLK/WS dung chung cho ca ADC (mic) va DAC (loa).

@@ -2,9 +2,11 @@
 CONFIG_IDF_TARGET="esp32s3"
 
 # PSRAM la bat buoc: JSON + base64 audio buffer cho Gemini Live can nhieu RAM.
-# TODO: doi sang Octal neu module la ...R8 (vd N16R8); Quad neu la ...R2/R8-Q.
+# Da xac nhan qua esptool chip-detect: "Embedded PSRAM 8MB (AP_3v3)" tren
+# ESP32-S3 (QFN56 rev v0.2) = bien the R8 voi PSRAM Octal trong package, KHONG
+# phai Quad. Dat sai Quad/Octal gay treo/reset ngay tu rat som luc boot.
 CONFIG_SPIRAM=y
-CONFIG_SPIRAM_MODE_QUAD=y
+CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_USE_MALLOC=y
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
