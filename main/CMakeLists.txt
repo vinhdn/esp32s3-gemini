@@ -7,14 +7,17 @@ idf_component_register(
         "wifi/captive_http.c"
         "audio/codec_board.c"
         "audio/audio_pipeline_gemini.c"
+        "audio/alert_sound.c"
         "display/lcd_display.c"
         "display/ui_screens.c"
         "display/fonts/font_vi_14.c"
         "display/fonts/font_vi_20.c"
+        "display/fonts/font_speed_64.c"
         "input/buttons.c"
         "power/battery_monitor.c"
         "power/status_led.c"
         "gemini/gemini_live_client.c"
+        "ble/waze_hud_ble.c"
     INCLUDE_DIRS
         "."
         "wifi"
@@ -23,6 +26,7 @@ idf_component_register(
         "input"
         "power"
         "gemini"
+        "ble"
     REQUIRES
         nvs_flash
         esp_wifi
@@ -40,4 +44,5 @@ idf_component_register(
         esp_codec_dev
         esp_lvgl_port
         lvgl
+        bt
 )

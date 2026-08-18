@@ -26,7 +26,8 @@ typedef struct {
 } button_ctx_t;
 
 static button_ctx_t s_buttons[] = {
-    { .pin = BOARD_PIN_BTN_TALK, .has_long_press = false, .click_event = BUTTON_EVENT_TALK_CLICK },
+    { .pin = BOARD_PIN_BTN_TALK, .has_long_press = true,
+      .click_event = BUTTON_EVENT_TALK_CLICK, .long_press_event = BUTTON_EVENT_TALK_LONG },
     { .pin = BOARD_PIN_BTN_VOL_UP, .has_long_press = true,
       .click_event = BUTTON_EVENT_VOL_UP_CLICK, .long_press_event = BUTTON_EVENT_VOL_UP_LONG },
     { .pin = BOARD_PIN_BTN_VOL_DOWN, .has_long_press = true,

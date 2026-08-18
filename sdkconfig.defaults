@@ -17,10 +17,26 @@ CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
-# TLS cho WebSocket wss:// toi Gemini Live API
-CONFIG_MBEDTLS_SSL_PROTO_TLS1_3=y
+# TLS cho WebSocket wss:// toi Gemini Live API.
+# TLS 1.3 TAT: gap MBEDTLS_ERR_SSL_ALLOC_FAILED tren board that (RAM noi bo
+# chi con vai chuc KB sau khi WiFi+audio+LVGL da khoi tao, va bi phan manh).
+# TLS 1.3 trong mbedtls can them cau truc/bo nho cho session ticket + key
+# schedule, nang hon dang ke so voi TLS 1.2 — Google van ho tro day du TLS 1.2
+# nen tat 1.3 de giam ap luc bo nho luc handshake.
+# CONFIG_MBEDTLS_SSL_PROTO_TLS1_3 is not set
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
-CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+# Dung bundle rut gon (~99% coverage, giam 50% kich thuoc) thay vi full ~200
+# CA, cung de bot ap luc bo nho/flash — root cua Google chac chan nam trong
+# tap rut gon nay.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_CMN=y
+
+# Da gap MBEDTLS_ERR_SSL_ALLOC_FAILED (-0x7F00) that tren board that: mbedtls
+# khong xin duoc du RAM noi bo de dung buffer SSL co dinh (16KB in / 4KB out)
+# khi WiFi+LVGL+audio dang chiem nhieu heap cung luc. Bat buffer SSL co kich
+# thuoc dong (co the giam dan ve dung luong that dung) de giam RAM can cho
+# moi ket noi TLS. (MBEDTLS_DYNAMIC_BUFFER la lua chon khac cung muc dich
+# nhung loai tru lan nhau voi option nay - khong dung ca 2.)
+CONFIG_MBEDTLS_SSL_VARIABLE_BUFFER_LENGTH=y
 
 # esp_websocket_client can buffer lon hon mac dinh vi frame JSON audio kha to
 CONFIG_WS_TRANSPORT=y
@@ -35,3 +51,9 @@ CONFIG_FREERTOS_HZ=1000
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
 # Bat WiFi AP+STA dong thoi khong bat buoc (chi can khi provisioning), giu mac dinh IDF.
+
+# BLE (NimBLE - nhe hon Bluedroid ve RAM) cho tinh nang "Car Mode" hien thi
+# toc do. Chi 1 trong 2 (WiFi hoac BLE) chay tai 1 thoi diem — xem
+# main/ble/ble_car_service.c va app_main.c (chuyen mode qua giu nut Talk).
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y

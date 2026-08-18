@@ -112,11 +112,17 @@ esp_err_t lcd_display_init(void)
     const lvgl_port_cfg_t lvgl_cfg = ESP_LVGL_PORT_INIT_CONFIG();
     ESP_ERROR_CHECK(lvgl_port_init(&lvgl_cfg));
 
+    // Buffer ve nho + 1 buffer (khong double-buffer) de tiet kiem RAM noi bo
+    // DMA-capable — da xac nhan qua do thuc te tren board: buffer 40 dong x2
+    // (double buffer) chiem ~38KB RAM noi bo, gay thieu RAM cho mbedtls luc
+    // ket noi TLS toi Gemini Live (MBEDTLS_ERR_SSL_ALLOC_FAILED). UI chi la
+    // man hinh trang thai don gian, khong can toc do ve nhanh nen doi hoi sinh
+    // (single buffer, 10 dong/lan) hoan toan chap nhan duoc.
     const lvgl_port_display_cfg_t disp_cfg = {
         .io_handle = s_panel_io,
         .panel_handle = s_panel,
-        .buffer_size = BOARD_LCD_H_RES * 40,
-        .double_buffer = true,
+        .buffer_size = BOARD_LCD_H_RES * 10,
+        .double_buffer = false,
         .hres = BOARD_LCD_H_RES,
         .vres = BOARD_LCD_V_RES,
         .color_format = LV_COLOR_FORMAT_RGB565,

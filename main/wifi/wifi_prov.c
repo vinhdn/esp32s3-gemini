@@ -31,6 +31,7 @@ static esp_netif_t *s_ap_netif = NULL;
 static esp_timer_handle_t s_reconnect_timer = NULL;
 static bool s_provisioning_mode = false;
 static bool s_retry_fallback = false;
+static bool s_paused = false;
 
 static void start_provisioning_ap(bool due_to_failure);
 
@@ -51,8 +52,8 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (s_provisioning_mode) {
-            return; // dang o AP mode, khong con STA de retry
+        if (s_provisioning_mode || s_paused) {
+            return; // dang o AP mode, hoac WiFi bi tam dung co chu dich (vd Car Mode) - khong retry
         }
         notify_state(WIFI_PROV_STATE_DISCONNECTED);
         if (s_retry_count < BOARD_WIFI_STA_MAX_RETRY) {
@@ -177,4 +178,43 @@ const char *wifi_prov_get_ap_ssid(void)
 bool wifi_prov_is_retry_fallback(void)
 {
     return s_retry_fallback;
+}
+
+void wifi_prov_pause(void)
+{
+    s_paused = true;
+    if (s_reconnect_timer) {
+        esp_timer_stop(s_reconnect_timer); // bo qua loi neu timer khong dang chay
+    }
+    esp_wifi_stop();
+
+    // QUAN TRONG: esp_wifi_stop() KHONG giai phong het RAM noi bo ma driver
+    // WiFi dang giu (da xac nhan tren board that: BLE ble_buf_alloc() bao
+    // ESP_ERR_NO_MEM/"hci inits failed" ngay sau khi chi stop() ma khong
+    // deinit()). Phai deinit() han hoi de tra lai RAM cho BLE dung.
+    esp_err_t err = esp_wifi_deinit();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "esp_wifi_deinit loi (%s), RAM co the khong duoc giai phong het",
+                 esp_err_to_name(err));
+    }
+}
+
+void wifi_prov_resume(void)
+{
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    esp_err_t err = esp_wifi_init(&cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_init lai that bai: %s", esp_err_to_name(err));
+        return;
+    }
+
+    s_paused = false;
+    s_retry_count = 0;
+
+    app_settings_t settings;
+    if (nvs_settings_load(&settings) == ESP_OK && settings.has_wifi_creds) {
+        start_sta(&settings);
+    } else {
+        start_provisioning_ap(false);
+    }
 }

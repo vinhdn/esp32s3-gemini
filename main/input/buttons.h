@@ -8,6 +8,7 @@ extern "C" {
 
 typedef enum {
     BUTTON_EVENT_TALK_CLICK,     // nut talk (BOOT) duoc nhan tha - dung de bat/tat phien noi chuyen
+    BUTTON_EVENT_TALK_LONG,      // giu lau nut talk -> chuyen doi Tro ly <-> Car Mode
     BUTTON_EVENT_VOL_UP_CLICK,
     BUTTON_EVENT_VOL_UP_LONG,    // giu lau -> tang len 100%
     BUTTON_EVENT_VOL_DOWN_CLICK,

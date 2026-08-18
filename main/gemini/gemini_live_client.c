@@ -10,7 +10,10 @@
 #include <string.h>
 
 #include "cJSON.h"
+#include "esp_crt_bundle.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_websocket_client.h"
 #include "freertos/FreeRTOS.h"
 #include "mbedtls/base64.h"
@@ -238,7 +241,18 @@ esp_err_t gemini_live_client_connect(const char *api_key)
         .buffer_size = 16384,
         .reconnect_timeout_ms = 5000,
         .network_timeout_ms = 10000,
+        // Bat buoc phai co, khong thi esp-tls tu choi ket noi TLS (loi
+        // ESP_ERR_MBEDTLS_SSL_SETUP_FAILED: "No server verification option
+        // set"). Dung cert bundle co san cua ESP-IDF (da bat
+        // CONFIG_MBEDTLS_CERTIFICATE_BUNDLE trong sdkconfig.defaults) de xac
+        // thuc chung chi cua generativelanguage.googleapis.com.
+        .crt_bundle_attach = esp_crt_bundle_attach,
     };
+
+    ESP_LOGI(TAG, "Heap truoc khi ket noi TLS: free_total=%u free_internal=%u largest_internal_block=%u",
+             (unsigned)esp_get_free_heap_size(),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 
     s_client = esp_websocket_client_init(&ws_cfg);
     if (!s_client) {

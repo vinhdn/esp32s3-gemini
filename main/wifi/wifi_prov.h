@@ -34,6 +34,13 @@ const char *wifi_prov_get_ap_ssid(void);
 // de hien thi thong bao phu hop tren LCD ("mat ket noi" vs "can cau hinh").
 bool wifi_prov_is_retry_fallback(void);
 
+// Tam dung WiFi co chu dich (vd chuyen sang Car Mode dung BLE) - tat radio va
+// dam bao khong bi hieu nham la "mat ket noi" roi tu dong retry/roi ve
+// provisioning. Goi wifi_prov_resume() de bat lai va tiep tuc ket noi binh
+// thuong.
+void wifi_prov_pause(void);
+void wifi_prov_resume(void);
+
 #ifdef __cplusplus
 }
 #endif
