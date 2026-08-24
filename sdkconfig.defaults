@@ -44,7 +44,6 @@ CONFIG_MBEDTLS_SSL_VARIABLE_BUFFER_LENGTH=y
 
 # Stack lon hon cho cac task xu ly JSON/HTTP/audio
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
-CONFIG_FREERTOS_HZ=1000
 
 # LVGL qua managed component - dung mac dinh cua esp_lvgl_port
 
@@ -58,3 +57,10 @@ CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 # main/ble/ble_car_service.c va app_main.c (chuyen mode qua giu nut Talk).
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y
+
+# --- Giam nhiet / Power management ---
+# Cho phep CPU xuong 80MHz khi idle (khong co task nao can xu ly)
+CONFIG_PM_ENABLE=y
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+# Giam FreeRTOS tick rate tu 1000 xuong 100 (it timer interrupt hon)
+CONFIG_FREERTOS_HZ=100

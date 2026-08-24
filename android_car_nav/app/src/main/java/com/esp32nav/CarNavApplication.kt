@@ -44,6 +44,15 @@ class CarNavApplication : Application() {
         obdManager = ObdManager(this)
         vhalManager = VhalManager(this)
 
+        // Tự động bắt đầu scan BLE ngay khi app khởi tạo
+        bleManager.setAutoReconnect(true)
+        scope.launch {
+            // Delay nhỏ cho hệ thống ổn định sau boot
+            kotlinx.coroutines.delay(2000)
+            startForegroundService()
+            bleManager.startScan()
+        }
+
         // Thử kết nối VHAL (sẽ thành công trên Android Automotive)
         vhalManager.connect()
 

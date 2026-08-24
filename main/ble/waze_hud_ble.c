@@ -174,11 +174,10 @@ static void handle_line(const char *line, size_t length)
         if (s_data_cb) {
             s_data_cb(speed_kmh, limit_kmh, s_cb_ctx);
         }
-        // Nếu có road name, gửi qua nav callback để hiển thị trên LCD
-        if (road_name && road_name[0] && s_nav_cb) {
-            nav_data_t nav = {0};
-            strncpy(nav.road, road_name, sizeof(nav.road) - 1);
-            s_nav_cb(&nav, s_nav_cb_ctx);
+        // Road name từ Vietmap: hiển thị riêng dòng vị trí (không đè lên nav)
+        if (road_name && road_name[0]) {
+            extern void ui_set_location(const char *location);
+            ui_set_location(road_name);
         }
     } else if (strcmp(type->valuestring, "hi") == 0) {
         ESP_LOGI(TAG, "  -> hi (khai bao ben phat, xem lai log RX o tren de biet rate/fields da chap nhan)");

@@ -38,9 +38,10 @@ typedef struct {
     lv_obj_t *limit_number;
 
     // Navigation (CENTER - phần chính)
-    lv_obj_t *nav_direction_label;   // Ký hiệu hướng rẽ LỚN (font 64)
-    lv_obj_t *nav_distance_label;    // Khoảng cách lớn (font 20)
-    lv_obj_t *nav_road_label;        // Tên đường (font 14)
+    lv_obj_t *nav_direction_label;   // Ký hiệu hướng rẽ (LV_SYMBOL)
+    lv_obj_t *nav_distance_label;    // Khoảng cách tới lượt rẽ (font 20)
+    lv_obj_t *nav_road_label;        // Google Maps: tên đường sẽ rẽ vào (font 14, vàng)
+    lv_obj_t *location_label;        // Vietmap: vị trí hiện tại (font 14, trắng)
 
     // Current speed + ETA (BOTTOM)
     lv_obj_t *speed_circle;          // Hình tròn chứa tốc độ hiện tại
@@ -158,15 +159,25 @@ void ui_init(lv_display_t *disp)
     lv_obj_align(s_ui.nav_distance_label, LV_ALIGN_LEFT_MID, 50, 15);
     lv_label_set_text(s_ui.nav_distance_label, "");
 
-    // Tên đường sẽ rẽ vào (font 14, dưới direction)
+    // Tên đường sẽ rẽ vào - Google Maps (font 14, vàng)
     s_ui.nav_road_label = lv_label_create(scr);
     lv_obj_set_style_text_color(s_ui.nav_road_label, lv_color_hex(0xFFDD00), 0);
     lv_obj_set_style_text_font(s_ui.nav_road_label, &lv_font_vi_14, 0);
-    lv_obj_set_style_text_align(s_ui.nav_road_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_align(s_ui.nav_road_label, LV_TEXT_ALIGN_LEFT, 0);
     lv_label_set_long_mode(s_ui.nav_road_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_obj_set_width(s_ui.nav_road_label, 230);
     lv_obj_align(s_ui.nav_road_label, LV_ALIGN_LEFT_MID, 5, 50);
     lv_label_set_text(s_ui.nav_road_label, "");
+
+    // Vị trí hiện tại - Vietmap Live (font 14, trắng, dòng dưới)
+    s_ui.location_label = lv_label_create(scr);
+    lv_obj_set_style_text_color(s_ui.location_label, lv_color_hex(0xCCCCCC), 0);
+    lv_obj_set_style_text_font(s_ui.location_label, &lv_font_vi_14, 0);
+    lv_obj_set_style_text_align(s_ui.location_label, LV_TEXT_ALIGN_LEFT, 0);
+    lv_label_set_long_mode(s_ui.location_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_obj_set_width(s_ui.location_label, 230);
+    lv_obj_align(s_ui.location_label, LV_ALIGN_LEFT_MID, 5, 72);
+    lv_label_set_text(s_ui.location_label, "");
 
     // === SPEED CIRCLE (bên trái biển báo giới hạn, 50x50) ===
     s_ui.speed_circle = lv_obj_create(scr);
@@ -213,6 +224,7 @@ void ui_show_car_mode(void)
     lv_label_set_text(s_ui.nav_direction_label, "");
     lv_label_set_text(s_ui.nav_distance_label, "");
     lv_label_set_text(s_ui.nav_road_label, "");
+    lv_label_set_text(s_ui.location_label, "");
     lv_label_set_text(s_ui.time_remaining_label, "");
     lv_label_set_text(s_ui.eta_label, "");
     lv_obj_add_flag(s_ui.limit_sign, LV_OBJ_FLAG_HIDDEN);
@@ -303,8 +315,16 @@ void ui_nav_clear(void)
     lv_label_set_text(s_ui.nav_direction_label, "");
     lv_label_set_text(s_ui.nav_distance_label, "");
     lv_label_set_text(s_ui.nav_road_label, "");
+    lv_label_set_text(s_ui.location_label, "");
     lv_label_set_text(s_ui.time_remaining_label, "");
     lv_label_set_text(s_ui.eta_label, "");
+    lvgl_port_unlock();
+}
+
+void ui_set_location(const char *location)
+{
+    lvgl_port_lock(0);
+    lv_label_set_text(s_ui.location_label, location ? location : "");
     lvgl_port_unlock();
 }
 

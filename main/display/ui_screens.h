@@ -28,6 +28,9 @@ void ui_nav_update(const char *direction, const char *distance, const char *road
 // Xoa thong tin navigation.
 void ui_nav_clear(void);
 
+// Cap nhat vi tri hien tai tu Vietmap Live (dong rieng, mau trang).
+void ui_set_location(const char *location);
+
 // Nen nhap nhay do khi vuot toc do gioi han.
 void ui_flash_over_limit(void);
 
