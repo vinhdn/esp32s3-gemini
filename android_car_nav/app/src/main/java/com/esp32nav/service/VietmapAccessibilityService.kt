@@ -53,20 +53,39 @@ class VietmapAccessibilityService : AccessibilityService() {
 
         val info = serviceInfo ?: AccessibilityServiceInfo()
         info.eventTypes = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
-                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED or
+                AccessibilityEvent.TYPE_ANNOUNCEMENT
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
         info.flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
                 AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
-                AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+                AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                AccessibilityServiceInfo.FLAG_REQUEST_ENHANCED_WEB_ACCESSIBILITY
         info.notificationTimeout = 300
-        info.packageNames = MONITORED_PACKAGES
+        // Monitor ALL packages to catch Vietmap even on secondary display
+        // packageNames = null means all packages
+        info.packageNames = null
         serviceInfo = info
+
+        // Log active windows to debug multi-display
+        try {
+            val windows = windows
+            Log.i(TAG, "🪟 Accessible windows: ${windows.size}")
+            windows.forEach { window ->
+                Log.i(TAG, "  Window: title='${window.title}' type=${window.type} layer=${window.layer}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Cannot enumerate windows: ${e.message}")
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         val packageName = event.packageName?.toString() ?: return
-        if (!MONITORED_PACKAGES.contains(packageName)) return
+
+        // Filter only monitored packages
+        val isMonitored = MONITORED_PACKAGES.any { packageName.contains(it) || it.contains(packageName) }
+        if (!isMonitored) return
 
         isNavigating = true
 
@@ -90,7 +109,12 @@ class VietmapAccessibilityService : AccessibilityService() {
     }
 
     private fun processWindowContent(packageName: String) {
-        val rootNode = rootInActiveWindow ?: return
+        val rootNode = try {
+            rootInActiveWindow
+        } catch (e: Exception) {
+            Log.w(TAG, "Cannot get rootInActiveWindow: ${e.message}")
+            return
+        } ?: return
 
         try {
             val allTexts = mutableListOf<NodeTextInfo>()
@@ -102,13 +126,13 @@ class VietmapAccessibilityService : AccessibilityService() {
                 packageName == "com.google.android.apps.maps" -> parseGoogleMapsData(allTexts)
             }
 
-            // Debug log every 10 seconds
-            if (System.currentTimeMillis() - lastDebugLog > 10000) {
+            // Debug log every 5 seconds
+            if (System.currentTimeMillis() - lastDebugLog > 5000) {
                 lastDebugLog = System.currentTimeMillis()
                 Log.d(TAG, "=== [$packageName] ${allTexts.size} nodes ===")
-                allTexts.take(20).forEach { info ->
+                allTexts.forEach { info ->
                     if (info.text.isNotBlank() || info.contentDescription.isNotBlank()) {
-                        Log.d(TAG, "  [${info.viewId}] text='${info.text}' desc='${info.contentDescription}'")
+                        Log.d(TAG, "  d=${info.depth} [${info.viewId}] cls=${info.className} text='${info.text}' desc='${info.contentDescription}'")
                     }
                 }
             }
@@ -123,6 +147,11 @@ class VietmapAccessibilityService : AccessibilityService() {
      * Parse Vietmap Live node tree.
      * Format: contentDescription = "{speed}\nkm/h\n{limit}"
      *         contentDescription = "{road_name}\n{district}, {city}"
+     *         hoặc text node riêng chứa số tốc độ giới hạn
+     *
+     * Trên một số head unit, Vietmap hiển thị speed limit dưới dạng:
+     * - ImageView có contentDescription = "50" (số tốc độ giới hạn)
+     * - TextView text = "50" gần biển báo
      */
     private fun parseVietmapData(texts: List<NodeTextInfo>) {
         var foundSpeedLimit = 0
@@ -148,26 +177,44 @@ class VietmapAccessibilityService : AccessibilityService() {
                     val speed = lines[0].toIntOrNull()
                     if (speed != null && speed in 0..300) foundCurrentSpeed = speed
                 }
-            }
-            // Road name: doesn't contain km/h, has meaningful text
-            else if (combined.length > 3 && !combined.all { it.isDigit() }) {
-                val lines = combined.split("\n").map { it.trim() }
-                val candidate = lines.firstOrNull() ?: ""
-                // Avoid picking up random UI elements
-                if (candidate.length in 4..100 && !candidate.contains("km/h")) {
-                    foundRoadName = candidate
-                }
+                continue
             }
 
             // Fallback: view ID based detection
             val viewId = info.viewId.lowercase()
-            if (viewId.contains("speed_limit") || viewId.contains("speedlimit") || viewId.contains("max_speed")) {
+            if (viewId.contains("speed_limit") || viewId.contains("speedlimit") || 
+                viewId.contains("max_speed") || viewId.contains("limit")) {
                 val num = extractNumber("$text $desc")
                 if (num in 5..200) foundSpeedLimit = num
+                continue
             }
-            if (viewId.contains("current_speed") || viewId.contains("speedometer")) {
+            if (viewId.contains("current_speed") || viewId.contains("speedometer") ||
+                viewId.contains("speed_value")) {
                 val num = extractNumber("$text $desc")
                 if (num in 0..300) foundCurrentSpeed = num
+                continue
+            }
+
+            // Số đơn thuần trong biển báo tốc độ (ImageView/TextView không có viewId)
+            // Thường nằm ở node nhỏ, className là ImageView hoặc FrameLayout
+            if (combined.length <= 3 && combined.all { it.isDigit() }) {
+                val num = combined.toIntOrNull()
+                if (num != null && num in 20..150 && num % 10 == 0) {
+                    // Số tròn chục (20,30,40,50,60,70,80,90,100,110,120) → speed limit
+                    if (foundSpeedLimit == 0) foundSpeedLimit = num
+                }
+                continue
+            }
+
+            // Road name: doesn't contain km/h, has meaningful text
+            if (combined.length > 3 && !combined.all { it.isDigit() }) {
+                val lines = combined.split("\n").map { it.trim() }
+                val candidate = lines.firstOrNull() ?: ""
+                // Avoid picking up random UI elements
+                if (candidate.length in 4..100 && !candidate.contains("km/h") &&
+                    !candidate.matches(Regex("""^\d+.*"""))) {
+                    foundRoadName = candidate
+                }
             }
         }
 
@@ -207,15 +254,13 @@ class VietmapAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Parse Google Maps navigation nodes (dựa trên real device logcat):
+     * Parse Google Maps navigation nodes.
      *
-     * Key nodes:
-     * - id/step_instruction_container: desc="1.7 kilometers, Keep left" hoặc "Head west"
-     * - id/distance_text: text="1.7 km" (chỉ khi gần lượt rẽ)
-     * - id/top_cue_text: text="CT37 Đ. Vành Đai 3" (road name)
-     * - id/navigation_time_remaining_label: text="36 min"
-     * - (no id): desc="Distance remaining is 12 km, estimated time of arrival is 10:20 AM"
-     * - id/next_step_instruction_container: desc="Then Keep left" (next turn)
+     * Trên head unit, Google Maps có thể không dùng view IDs chuẩn.
+     * Strategy:
+     * 1. Ưu tiên parse theo view ID nếu có
+     * 2. Fallback: parse contentDescription chứa instruction/distance
+     * 3. Detect "Distance remaining..." description
      */
     private var lastGoogleMapsSendTime = 0L
 
@@ -232,6 +277,9 @@ class VietmapAccessibilityService : AccessibilityService() {
         var totalDistance = ""
         var instruction = ""
 
+        val distRegex = Regex("""([\d.,]+)\s*(kilometers?|meters?|km|m|miles?|mi|feet|ft|mét|kilômét)""", RegexOption.IGNORE_CASE)
+        val etaRegex = Regex("""(\d{1,2}:\d{2})\s*([AP]M|SA|CH)?""", RegexOption.IGNORE_CASE)
+
         for (info in texts) {
             val viewId = info.viewId
             val text = info.text.trim()
@@ -243,17 +291,9 @@ class VietmapAccessibilityService : AccessibilityService() {
                     if (desc.isNotBlank()) {
                         instruction = desc
                         direction = parseGoogleDirection(desc)
-                        // Thử parse distance từ instruction
-                        val distMatch = Regex("""([\d.,]+)\s*(kilometers?|meters?|km|m|miles?|mi|feet|ft)""", RegexOption.IGNORE_CASE).find(desc)
+                        val distMatch = distRegex.find(desc)
                         if (distMatch != null) {
-                            val value = distMatch.groupValues[1].replace(",", ".")
-                            val unit = distMatch.groupValues[2].lowercase()
-                            distance = when {
-                                unit.startsWith("kilometer") || unit == "km" -> "$value km"
-                                unit.startsWith("meter") || unit == "m" -> "$value m"
-                                unit.startsWith("mile") || unit == "mi" -> "$value mi"
-                                else -> "$value $unit"
-                            }
+                            distance = formatDistance(distMatch.groupValues[1], distMatch.groupValues[2])
                         }
                     }
                 }
@@ -264,30 +304,49 @@ class VietmapAccessibilityService : AccessibilityService() {
                 }
 
                 // Road name for next turn
-                viewId.contains("top_cue_text") -> {
+                viewId.contains("top_cue_text") || viewId.contains("cue_text") -> {
                     if (text.isNotBlank()) roadName = text
                 }
 
                 // Time remaining
-                viewId.contains("navigation_time_remaining") -> {
+                viewId.contains("navigation_time_remaining") || viewId.contains("time_remaining") -> {
                     if (text.isNotBlank()) timeRemaining = text
                 }
 
-                // Bottom bar ETA (từ contentDescription)
+                // Fallback: parse by content when no known view IDs
                 else -> {
+                    // "Distance remaining is 12 km, estimated time of arrival is 10:20 AM"
                     if (desc.contains("estimated time of arrival", ignoreCase = true) ||
-                        desc.contains("Time until arrival", ignoreCase = true)) {
-                        val etaMatch = Regex("""(\d{1,2}:\d{2}\s*[AP]M)""", RegexOption.IGNORE_CASE).find(desc)
-                        if (etaMatch != null) eta = etaMatch.groupValues[1]
+                        desc.contains("Time until arrival", ignoreCase = true) ||
+                        desc.contains("Dự kiến", ignoreCase = true) ||
+                        desc.contains("còn lại", ignoreCase = true)) {
+                        val etaMatch = etaRegex.find(desc)
+                        if (etaMatch != null) eta = "${etaMatch.groupValues[1]} ${etaMatch.groupValues[2]}".trim()
                         val distRemMatch = Regex("""([\d.,]+)\s*(km|m|mi)""").find(desc)
                         if (distRemMatch != null) totalDistance = "${distRemMatch.groupValues[1]} ${distRemMatch.groupValues[2]}"
                     }
+
                     // Text field "12 km  •  10:20 AM"
                     if (text.contains("•") && text.contains(":") && viewId.isBlank()) {
                         val parts = text.split("•").map { it.trim() }
                         if (parts.size >= 2) {
                             totalDistance = parts[0].trim()
                             eta = parts[1].trim()
+                        }
+                    }
+
+                    // Fallback: contentDescription chứa distance + direction
+                    // e.g. "270 mét - về hướng Mỹ Đình" or "1.7 kilometers, Keep left"
+                    if (desc.isNotBlank() && instruction.isBlank() && viewId.isBlank()) {
+                        val distMatch = distRegex.find(desc)
+                        if (distMatch != null) {
+                            val possibleInstruction = desc.substring(distMatch.range.last + 1)
+                                .trim().removePrefix(",").removePrefix("-").removePrefix("–").trim()
+                            if (possibleInstruction.isNotBlank() && possibleInstruction.length > 2) {
+                                distance = formatDistance(distMatch.groupValues[1], distMatch.groupValues[2])
+                                instruction = possibleInstruction
+                                direction = parseGoogleDirection(possibleInstruction)
+                            }
                         }
                     }
                 }
@@ -309,6 +368,18 @@ class VietmapAccessibilityService : AccessibilityService() {
                 totalDistance = totalDistance,
                 eta = eta
             )
+        }
+    }
+
+    private fun formatDistance(value: String, unit: String): String {
+        val cleanValue = value.replace(",", ".")
+        return when (unit.lowercase()) {
+            "kilometer", "kilometers", "kilômét" -> "$cleanValue km"
+            "meter", "meters", "mét" -> "$cleanValue m"
+            "km", "m", "mi", "ft" -> "$cleanValue $unit"
+            "mile", "miles" -> "$cleanValue mi"
+            "feet" -> "$cleanValue ft"
+            else -> "$cleanValue $unit"
         }
     }
 

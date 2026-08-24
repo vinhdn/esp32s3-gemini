@@ -35,5 +35,6 @@ data class VehicleData(
         return json.toString() + "\n"
     }
 
-    fun hasData(): Boolean = speedKmh >= 0 || rpm >= 0 || coolantTempC > -999
+    fun hasData(): Boolean = speedKmh >= 0 || rpm >= 0 || coolantTempC > -999 ||
+            tireFLkPa >= 0 || tireFRkPa >= 0 || tireRLkPa >= 0 || tireRRkPa >= 0
 }

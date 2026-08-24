@@ -57,6 +57,9 @@ class CarNavApplication : Application() {
         // Thử kết nối VHAL (sẽ thành công trên Android Automotive)
         vhalManager.connect()
 
+        // Start LogcatReader để đọc TPMS + speed limit từ InstrumentActivity
+        startLogcatReader()
+
         // Observe VHAL vehicle data
         scope.launch {
             vhalManager.vehicleData.collect { data ->
@@ -171,6 +174,45 @@ class CarNavApplication : Application() {
     }
 
     /**
+     * Start LogcatReader service để đọc TPMS + speed limit từ InstrumentActivity log.
+     */
+    private fun startLogcatReader() {
+        val intent = Intent(this, com.esp32nav.service.LogcatReaderService::class.java)
+        startService(intent)
+    }
+
+    /**
+     * Nhận TPMS data từ LogcatReader (đọc logcat InstrumentActivity).
+     * Gửi qua BLE sang ESP32 dưới dạng vehicle data.
+     */
+    fun onLogcatTpmsUpdate(fl: Int, fr: Int, rl: Int, rr: Int) {
+        val data = VehicleData(
+            tireFLkPa = fl,
+            tireFRkPa = fr,
+            tireRLkPa = rl,
+            tireRRkPa = rr
+        )
+        val message = data.toHlpJson()
+        bleManager.writeData(message)
+        addLogEntry("TX", message.trim())
+    }
+
+    /**
+     * Nhận speed limit từ LogcatReader (đọc logcat InstrumentActivity).
+     * Gửi qua BLE sang ESP32 dưới dạng speed data (tương thích Vietmap source).
+     */
+    fun onLogcatSpeedLimitUpdate(limit: Int) {
+        if (limit > 0) {
+            onAccessibilityUpdate(
+                speedLimit = limit,
+                currentSpeed = -1,
+                roadName = "",
+                source = "logcat"
+            )
+        }
+    }
+
+    /**
      * Nhận navigation data từ Google Maps accessibility parsing.
      * Gửi đầy đủ: direction, distance, road, time remaining, ETA.
      */
@@ -224,6 +266,11 @@ class CarNavApplication : Application() {
         stopService(intent)
     }
 
+    /**
+     * Legacy: cập nhật notification text thủ công.
+     * BleForegroundService giờ tự observe bleState và tự cập nhật notification.
+     * Giữ lại cho trường hợp cần force-update status từ bên ngoài.
+     */
     fun updateForegroundServiceStatus(status: String) {
         val intent = Intent(this, com.esp32nav.service.BleForegroundService::class.java).apply {
             putExtra("status", status)

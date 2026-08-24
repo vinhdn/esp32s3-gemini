@@ -423,4 +423,37 @@ void ui_vehicle_update(const vehicle_data_t *data)
         lv_label_set_text(s_ui.speed_label, buf);
         lvgl_port_unlock();
     }
+
+    // Hiển thị TPMS nếu có data (dùng dòng location_label khi không navigate,
+    // hoặc dòng eta_label nếu đang navigate)
+    bool has_tpms = data->tire_fl_kpa > 0 || data->tire_fr_kpa > 0 ||
+                    data->tire_rl_kpa > 0 || data->tire_rr_kpa > 0;
+    if (has_tpms) {
+        lvgl_port_lock(0);
+        // Format: "FL:2.1 FR:2.1 RL:2.2 RR:2.2" (bar, 1 decimal)
+        char tpms_buf[64];
+        snprintf(tpms_buf, sizeof(tpms_buf), "FL:%.1f FR:%.1f RL:%.1f RR:%.1f",
+                 data->tire_fl_kpa / 100.0,
+                 data->tire_fr_kpa / 100.0,
+                 data->tire_rl_kpa / 100.0,
+                 data->tire_rr_kpa / 100.0);
+
+        // Hiển thị ở dòng ETA (dưới cùng)
+        lv_label_set_text(s_ui.eta_label, tpms_buf);
+
+        // Đổi màu nếu áp suất thấp (< 180 kPa = 1.8 bar) hoặc cao (> 280 kPa)
+        bool warning = false;
+        int16_t tires[] = {data->tire_fl_kpa, data->tire_fr_kpa,
+                           data->tire_rl_kpa, data->tire_rr_kpa};
+        for (int i = 0; i < 4; i++) {
+            if (tires[i] > 0 && (tires[i] < 180 || tires[i] > 280)) {
+                warning = true;
+                break;
+            }
+        }
+        lv_obj_set_style_text_color(s_ui.eta_label,
+            warning ? lv_color_hex(0xFF6600) : lv_color_hex(0x888888), 0);
+
+        lvgl_port_unlock();
+    }
 }
