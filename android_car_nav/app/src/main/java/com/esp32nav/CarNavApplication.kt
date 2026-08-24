@@ -10,6 +10,7 @@ import com.esp32nav.parser.DatMapParser
 import com.esp32nav.vhal.VhalManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import java.text.Normalizer
 
 class CarNavApplication : Application() {
 
@@ -138,6 +139,13 @@ class CarNavApplication : Application() {
     }
 
     /**
+     * Normalize Unicode text sang NFC (precomposed form).
+     * Cần thiết vì Android/Google Maps có thể trả về NFD (decomposed: e + combining ^)
+     * trong khi font ESP32 chỉ có NFC (precomposed: ế = U+1EBF).
+     */
+    private fun nfc(text: String): String = Normalizer.normalize(text, Normalizer.Form.NFC)
+
+    /**
      * Nhận dữ liệu từ AccessibilityService (Vietmap Live / DatMap / Google Maps).
      * Gửi sang ESP32: tốc độ giới hạn, tốc độ hiện tại, tên đường.
      * Message type "s" cho speed data (tương thích với car_update trên ESP32).
@@ -148,7 +156,7 @@ class CarNavApplication : Application() {
             if (currentSpeed >= 0) append(",\"spd\":$currentSpeed")
             if (speedLimit > 0) append(",\"lim\":$speedLimit")
             if (roadName.isNotBlank()) {
-                val escaped = roadName.replace("\"", "\\\"").replace("\n", " ").take(60)
+                val escaped = nfc(roadName).replace("\"", "\\\"").replace("\n", " ").take(60)
                 append(",\"road\":\"$escaped\"")
             }
             append(",\"src\":\"$source\"")
@@ -178,18 +186,18 @@ class CarNavApplication : Application() {
         val json = buildString {
             append("{\"v\":1,\"t\":\"nav\"")
             if (direction.isNotBlank()) append(",\"dir\":\"$direction\"")
-            if (distance.isNotBlank()) append(",\"dist\":\"${distance.replace("\"", "")}\"")
+            if (distance.isNotBlank()) append(",\"dist\":\"${nfc(distance).replace("\"", "")}\"")
             if (roadName.isNotBlank()) {
-                val escaped = roadName.replace("\"", "\\\"").take(60)
+                val escaped = nfc(roadName).replace("\"", "\\\"").take(60)
                 append(",\"road\":\"$escaped\"")
             }
             if (instruction.isNotBlank()) {
-                val escaped = instruction.replace("\"", "\\\"").take(80)
+                val escaped = nfc(instruction).replace("\"", "\\\"").take(80)
                 append(",\"instruction\":\"$escaped\"")
             }
-            if (timeRemaining.isNotBlank()) append(",\"time\":\"${timeRemaining.replace("\"", "")}\"")
-            if (totalDistance.isNotBlank()) append(",\"total_dist\":\"${totalDistance.replace("\"", "")}\"")
-            if (eta.isNotBlank()) append(",\"eta\":\"${eta.replace("\"", "")}\"")
+            if (timeRemaining.isNotBlank()) append(",\"time\":\"${nfc(timeRemaining).replace("\"", "")}\"")
+            if (totalDistance.isNotBlank()) append(",\"total_dist\":\"${nfc(totalDistance).replace("\"", "")}\"")
+            if (eta.isNotBlank()) append(",\"eta\":\"${nfc(eta).replace("\"", "")}\"")
             append("}\n")
         }
         bleManager.writeData(json)

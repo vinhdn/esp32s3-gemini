@@ -7,6 +7,7 @@ idf_component_register(
         "audio/alert_sound.c"
         "display/lcd_display.c"
         "display/ui_screens.c"
+        "display/nav_icons.c"
         "display/fonts/font_vi_14.c"
         "display/fonts/font_vi_20.c"
         "display/fonts/font_speed_64.c"

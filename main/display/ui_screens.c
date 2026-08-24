@@ -20,6 +20,7 @@
 #include <string.h>
 
 #include "esp_lvgl_port.h"
+#include "nav_icons.h"
 
 LV_FONT_DECLARE(lv_font_vi_14);
 LV_FONT_DECLARE(lv_font_vi_20);
@@ -38,7 +39,7 @@ typedef struct {
     lv_obj_t *limit_number;
 
     // Navigation (CENTER - phần chính)
-    lv_obj_t *nav_direction_label;   // Ký hiệu hướng rẽ (LV_SYMBOL)
+    lv_obj_t *nav_direction_img;     // Image icon hướng rẽ (32x32 bitmap)
     lv_obj_t *nav_distance_label;    // Khoảng cách tới lượt rẽ (font 20)
     lv_obj_t *nav_road_label;        // Google Maps: tên đường sẽ rẽ vào (font 14, vàng)
     lv_obj_t *location_label;        // Vietmap: vị trí hiện tại (font 14, trắng)
@@ -145,17 +146,21 @@ void ui_init(lv_display_t *disp)
     lv_label_set_text(s_ui.limit_number, "");
 
     // === NAVIGATION DIRECTION (DƯỚI speed circles, y=100+) ===
-    // Dùng LV_FONT_DEFAULT (có FontAwesome symbols: LEFT, RIGHT, UP, DOWN)
-    s_ui.nav_direction_label = lv_label_create(scr);
-    lv_obj_set_style_text_color(s_ui.nav_direction_label, lv_color_hex(0x33CC66), 0);
-    lv_obj_set_style_text_font(s_ui.nav_direction_label, LV_FONT_DEFAULT, 0);
-    lv_obj_align(s_ui.nav_direction_label, LV_ALIGN_LEFT_MID, 10, 15);
-    lv_label_set_text(s_ui.nav_direction_label, "");
+    // Dùng lv_image 32x32 cho icon hướng rẽ rõ ràng
+    s_ui.nav_direction_img = lv_image_create(scr);
+    lv_obj_set_size(s_ui.nav_direction_img, 32, 32);
+    lv_obj_align(s_ui.nav_direction_img, LV_ALIGN_LEFT_MID, 10, 15);
+    lv_image_set_src(s_ui.nav_direction_img, &nav_icon_straight);
+    lv_obj_set_style_image_recolor(s_ui.nav_direction_img, lv_color_hex(0x33CC66), 0);
+    lv_obj_set_style_image_recolor_opa(s_ui.nav_direction_img, LV_OPA_COVER, 0);
+    lv_obj_add_flag(s_ui.nav_direction_img, LV_OBJ_FLAG_HIDDEN);
 
-    // Khoảng cách tới lượt rẽ (font 20, bên phải direction)
+    // Khoảng cách tới lượt rẽ hoặc instruction (font 20, bên phải direction)
     s_ui.nav_distance_label = lv_label_create(scr);
     lv_obj_set_style_text_color(s_ui.nav_distance_label, lv_color_hex(0x33FF66), 0);
     lv_obj_set_style_text_font(s_ui.nav_distance_label, &lv_font_vi_20, 0);
+    lv_label_set_long_mode(s_ui.nav_distance_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_obj_set_width(s_ui.nav_distance_label, 180);
     lv_obj_align(s_ui.nav_distance_label, LV_ALIGN_LEFT_MID, 50, 15);
     lv_label_set_text(s_ui.nav_distance_label, "");
 
@@ -221,7 +226,7 @@ void ui_show_car_mode(void)
     lvgl_port_lock(0);
     lv_label_set_text(s_ui.limit_number, "");
     lv_label_set_text(s_ui.speed_label, "0");
-    lv_label_set_text(s_ui.nav_direction_label, "");
+    lv_obj_add_flag(s_ui.nav_direction_img, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(s_ui.nav_distance_label, "");
     lv_label_set_text(s_ui.nav_road_label, "");
     lv_label_set_text(s_ui.location_label, "");
@@ -262,49 +267,48 @@ void ui_car_update(uint16_t speed_kmh, uint16_t limit_kmh)
     lvgl_port_unlock();
 }
 
-// Chuyển direction string thành LVGL symbol icons.
-// LV_FONT_DEFAULT (FontAwesome) có: LEFT, RIGHT, UP, DOWN, REFRESH (rotate)
-static const char *direction_to_arrow(const char *dir)
+// Chuyển direction string thành navigation icon bitmap.
+static const lv_image_dsc_t *direction_to_icon(const char *dir)
 {
-    if (!dir || !dir[0]) return "";
-    if (strcmp(dir, "turn_left") == 0) return LV_SYMBOL_LEFT;
-    if (strcmp(dir, "turn_right") == 0) return LV_SYMBOL_RIGHT;
-    if (strcmp(dir, "straight") == 0) return LV_SYMBOL_UP;
-    if (strcmp(dir, "slight_left") == 0) return LV_SYMBOL_LEFT;
-    if (strcmp(dir, "slight_right") == 0) return LV_SYMBOL_RIGHT;
-    if (strcmp(dir, "sharp_left") == 0) return LV_SYMBOL_LEFT LV_SYMBOL_LEFT;
-    if (strcmp(dir, "sharp_right") == 0) return LV_SYMBOL_RIGHT LV_SYMBOL_RIGHT;
-    if (strcmp(dir, "u_turn") == 0) return LV_SYMBOL_LOOP;
-    if (strcmp(dir, "arrive") == 0) return LV_SYMBOL_OK;
-    if (strcmp(dir, "roundabout") == 0) return LV_SYMBOL_REFRESH;
-    if (strcmp(dir, "merge") == 0) return LV_SYMBOL_UP;
-    if (strcmp(dir, "exit_right") == 0) return LV_SYMBOL_RIGHT;
-    if (strcmp(dir, "exit_left") == 0) return LV_SYMBOL_LEFT;
-    return LV_SYMBOL_UP;
+    if (!dir || !dir[0]) return &nav_icon_straight;
+    if (strcmp(dir, "turn_left") == 0) return &nav_icon_turn_left;
+    if (strcmp(dir, "turn_right") == 0) return &nav_icon_turn_right;
+    if (strcmp(dir, "straight") == 0) return &nav_icon_straight;
+    if (strcmp(dir, "slight_left") == 0) return &nav_icon_slight_left;
+    if (strcmp(dir, "slight_right") == 0) return &nav_icon_slight_right;
+    if (strcmp(dir, "sharp_left") == 0) return &nav_icon_turn_left;
+    if (strcmp(dir, "sharp_right") == 0) return &nav_icon_turn_right;
+    if (strcmp(dir, "u_turn") == 0) return &nav_icon_uturn;
+    if (strcmp(dir, "arrive") == 0) return &nav_icon_arrive;
+    if (strcmp(dir, "roundabout") == 0) return &nav_icon_uturn; // reuse
+    if (strcmp(dir, "merge") == 0) return &nav_icon_straight;
+    if (strcmp(dir, "exit_right") == 0) return &nav_icon_slight_right;
+    if (strcmp(dir, "exit_left") == 0) return &nav_icon_slight_left;
+    return &nav_icon_straight;
 }
 
 void ui_nav_update(const char *direction, const char *distance, const char *road, const char *instruction)
 {
     lvgl_port_lock(0);
 
-    // Direction arrow
+    // Direction icon (32x32 bitmap)
     if (direction && direction[0]) {
-        const char *arrow = direction_to_arrow(direction);
-        lv_label_set_text(s_ui.nav_direction_label, arrow);
+        const lv_image_dsc_t *icon = direction_to_icon(direction);
+        lv_image_set_src(s_ui.nav_direction_img, icon);
+        lv_obj_clear_flag(s_ui.nav_direction_img, LV_OBJ_FLAG_HIDDEN);
     }
 
-    // Khoảng cách
+    // Khoảng cách: ưu tiên distance, nếu không có thì hiện instruction
     if (distance && distance[0]) {
         lv_label_set_text(s_ui.nav_distance_label, distance);
+    } else if (instruction && instruction[0]) {
+        lv_label_set_text(s_ui.nav_distance_label, instruction);
     }
 
-    // Tên đường
+    // Tên đường sẽ rẽ vào
     if (road && road[0]) {
         lv_label_set_text(s_ui.nav_road_label, road);
     }
-
-    // Parse time/eta từ instruction nếu có trong nav_data_t
-    // (sẽ được xử lý riêng qua "time" và "eta" fields)
 
     lvgl_port_unlock();
 }
@@ -312,7 +316,7 @@ void ui_nav_update(const char *direction, const char *distance, const char *road
 void ui_nav_clear(void)
 {
     lvgl_port_lock(0);
-    lv_label_set_text(s_ui.nav_direction_label, "");
+    lv_obj_add_flag(s_ui.nav_direction_img, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(s_ui.nav_distance_label, "");
     lv_label_set_text(s_ui.nav_road_label, "");
     lv_label_set_text(s_ui.location_label, "");
@@ -348,8 +352,13 @@ void ui_nav_update_meta(const char *time_remaining, const char *total_dist, cons
 
     // ETA ở dưới cùng
     if (eta && eta[0]) {
-        char eta_buf[32];
-        snprintf(eta_buf, sizeof(eta_buf), "ETA: %s", eta);
+        char eta_buf[48];
+        // Không thêm "ETA:" nếu text đã chứa "Dự kiến" hoặc "ETA"
+        if (strstr(eta, "kiến") || strstr(eta, "ETA")) {
+            snprintf(eta_buf, sizeof(eta_buf), "%s", eta);
+        } else {
+            snprintf(eta_buf, sizeof(eta_buf), "ETA: %s", eta);
+        }
         lv_label_set_text(s_ui.eta_label, eta_buf);
     }
 
