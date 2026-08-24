@@ -21,7 +21,7 @@
 
 static const char *TAG = "waze_hud_ble";
 
-#define DEVICE_NAME "WazeHUD"
+#define DEVICE_NAME "VIETMAP_HUD_H1X"
 #define HLP_MAX_FRAME 512
 
 // UUID theo dung bang "UUID cua transport" trong Document 9. Byte truyen
@@ -50,6 +50,12 @@ static TaskHandle_t s_protocol_task;
 
 static waze_hud_data_cb_t s_data_cb;
 static void *s_cb_ctx;
+
+static waze_hud_nav_cb_t s_nav_cb;
+static void *s_nav_cb_ctx;
+
+static waze_hud_vehicle_cb_t s_vehicle_cb;
+static void *s_vehicle_cb_ctx;
 
 static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t s_rx_handle;
@@ -160,16 +166,115 @@ static void handle_line(const char *line, size_t length)
     } else if (strcmp(type->valuestring, "s") == 0) {
         cJSON *spd = cJSON_GetObjectItemCaseSensitive(root, "spd");
         cJSON *lim = cJSON_GetObjectItemCaseSensitive(root, "lim");
+        cJSON *road = cJSON_GetObjectItemCaseSensitive(root, "road");
         uint16_t speed_kmh = cJSON_IsNumber(spd) ? (uint16_t)spd->valueint : 0;
         uint16_t limit_kmh = cJSON_IsNumber(lim) ? (uint16_t)lim->valueint : 0;
-        ESP_LOGI(TAG, "  -> state: spd=%u lim=%u km/h", speed_kmh, limit_kmh);
+        const char *road_name = (cJSON_IsString(road) && road->valuestring) ? road->valuestring : NULL;
+        ESP_LOGI(TAG, "  -> state: spd=%u lim=%u km/h road=%s", speed_kmh, limit_kmh, road_name ? road_name : "(none)");
         if (s_data_cb) {
             s_data_cb(speed_kmh, limit_kmh, s_cb_ctx);
+        }
+        // Nếu có road name, gửi qua nav callback để hiển thị trên LCD
+        if (road_name && road_name[0] && s_nav_cb) {
+            nav_data_t nav = {0};
+            strncpy(nav.road, road_name, sizeof(nav.road) - 1);
+            s_nav_cb(&nav, s_nav_cb_ctx);
         }
     } else if (strcmp(type->valuestring, "hi") == 0) {
         ESP_LOGI(TAG, "  -> hi (khai bao ben phat, xem lai log RX o tren de biet rate/fields da chap nhan)");
     } else if (strcmp(type->valuestring, "bye") == 0) {
         ESP_LOGI(TAG, "  -> bye (dien thoai chuan bi ngat/dung dan duong)");
+    } else if (strcmp(type->valuestring, "nav") == 0) {
+        // Thong tin dan duong tu app Android (Google Maps navigation).
+        nav_data_t nav = {0};
+        cJSON *dir = cJSON_GetObjectItemCaseSensitive(root, "dir");
+        cJSON *dist = cJSON_GetObjectItemCaseSensitive(root, "dist");
+        cJSON *road = cJSON_GetObjectItemCaseSensitive(root, "road");
+        cJSON *eta = cJSON_GetObjectItemCaseSensitive(root, "eta");
+        cJSON *instr = cJSON_GetObjectItemCaseSensitive(root, "instruction");
+        cJSON *time_j = cJSON_GetObjectItemCaseSensitive(root, "time");
+        cJSON *total_dist_j = cJSON_GetObjectItemCaseSensitive(root, "total_dist");
+
+        if (cJSON_IsString(dir) && dir->valuestring) {
+            strncpy(nav.direction, dir->valuestring, sizeof(nav.direction) - 1);
+        }
+        if (cJSON_IsString(dist) && dist->valuestring) {
+            strncpy(nav.distance, dist->valuestring, sizeof(nav.distance) - 1);
+        }
+        if (cJSON_IsString(road) && road->valuestring) {
+            strncpy(nav.road, road->valuestring, sizeof(nav.road) - 1);
+        }
+        if (cJSON_IsString(eta) && eta->valuestring) {
+            strncpy(nav.eta, eta->valuestring, sizeof(nav.eta) - 1);
+        }
+        if (cJSON_IsString(instr) && instr->valuestring) {
+            strncpy(nav.instruction, instr->valuestring, sizeof(nav.instruction) - 1);
+        }
+        if (cJSON_IsString(time_j) && time_j->valuestring) {
+            strncpy(nav.time_remaining, time_j->valuestring, sizeof(nav.time_remaining) - 1);
+        }
+        if (cJSON_IsString(total_dist_j) && total_dist_j->valuestring) {
+            strncpy(nav.total_dist, total_dist_j->valuestring, sizeof(nav.total_dist) - 1);
+        }
+
+        ESP_LOGI(TAG, "  -> nav: dir=%s dist=%s road=%s eta=%s", nav.direction, nav.distance, nav.road, nav.eta);
+        if (s_nav_cb) {
+            s_nav_cb(&nav, s_nav_cb_ctx);
+        }
+    } else if (strcmp(type->valuestring, "veh") == 0) {
+        // Thong tin xe tu OBD-II (doc boi app Android).
+        vehicle_data_t vd = {
+            .speed_kmh = -1, .coolant_temp_c = -999, .intake_temp_c = -999,
+            .oil_temp_c = -999, .rpm = -1,
+            .tire_fl_kpa = -1, .tire_fr_kpa = -1, .tire_rl_kpa = -1, .tire_rr_kpa = -1,
+        };
+        cJSON *spd = cJSON_GetObjectItemCaseSensitive(root, "spd");
+        cJSON *coolant = cJSON_GetObjectItemCaseSensitive(root, "coolant");
+        cJSON *intake = cJSON_GetObjectItemCaseSensitive(root, "intake");
+        cJSON *oil = cJSON_GetObjectItemCaseSensitive(root, "oil");
+        cJSON *rpm_j = cJSON_GetObjectItemCaseSensitive(root, "rpm");
+        cJSON *tires = cJSON_GetObjectItemCaseSensitive(root, "tires");
+
+        if (cJSON_IsNumber(spd)) vd.speed_kmh = (int16_t)spd->valueint;
+        if (cJSON_IsNumber(coolant)) vd.coolant_temp_c = (int16_t)coolant->valueint;
+        if (cJSON_IsNumber(intake)) vd.intake_temp_c = (int16_t)intake->valueint;
+        if (cJSON_IsNumber(oil)) vd.oil_temp_c = (int16_t)oil->valueint;
+        if (cJSON_IsNumber(rpm_j)) vd.rpm = (int16_t)rpm_j->valueint;
+
+        if (cJSON_IsObject(tires)) {
+            cJSON *fl = cJSON_GetObjectItemCaseSensitive(tires, "fl");
+            cJSON *fr = cJSON_GetObjectItemCaseSensitive(tires, "fr");
+            cJSON *rl = cJSON_GetObjectItemCaseSensitive(tires, "rl");
+            cJSON *rr = cJSON_GetObjectItemCaseSensitive(tires, "rr");
+            if (cJSON_IsNumber(fl)) vd.tire_fl_kpa = (int16_t)fl->valueint;
+            if (cJSON_IsNumber(fr)) vd.tire_fr_kpa = (int16_t)fr->valueint;
+            if (cJSON_IsNumber(rl)) vd.tire_rl_kpa = (int16_t)rl->valueint;
+            if (cJSON_IsNumber(rr)) vd.tire_rr_kpa = (int16_t)rr->valueint;
+        }
+
+        ESP_LOGI(TAG, "  -> veh: spd=%d rpm=%d coolant=%d oil=%d tires=[%d,%d,%d,%d]kPa",
+                 vd.speed_kmh, vd.rpm, vd.coolant_temp_c, vd.oil_temp_c,
+                 vd.tire_fl_kpa, vd.tire_fr_kpa, vd.tire_rl_kpa, vd.tire_rr_kpa);
+        if (s_vehicle_cb) {
+            s_vehicle_cb(&vd, s_vehicle_cb_ctx);
+        }
+    } else if (strcmp(type->valuestring, "lim") == 0) {
+        // Thong tin toc do gioi han tu DatMap (canh bao giao thong Viet Nam).
+        cJSON *limit_j = cJSON_GetObjectItemCaseSensitive(root, "limit");
+        cJSON *cam_dist_j = cJSON_GetObjectItemCaseSensitive(root, "cam_dist");
+        cJSON *cam_type_j = cJSON_GetObjectItemCaseSensitive(root, "cam_type");
+
+        uint16_t limit = cJSON_IsNumber(limit_j) ? (uint16_t)limit_j->valueint : 0;
+        int cam_dist = cJSON_IsNumber(cam_dist_j) ? cam_dist_j->valueint : -1;
+        const char *cam_type = (cJSON_IsString(cam_type_j) && cam_type_j->valuestring) ? cam_type_j->valuestring : "";
+
+        ESP_LOGI(TAG, "  -> lim (DatMap): limit=%u cam_dist=%d cam_type=%s", limit, cam_dist, cam_type);
+
+        // Cap nhat gioi han toc do hien thi tren bien bao
+        if (limit > 0 && s_data_cb) {
+            // Gui lai speed hien tai (giu nguyen) voi limit moi tu DatMap
+            s_data_cb(0, limit, s_cb_ctx);
+        }
     } else {
         ESP_LOGI(TAG, "  -> t=\"%s\" chua duoc xu ly, bo qua theo quy tac tuong thich HLP/1", type->valuestring);
     }
@@ -412,6 +517,8 @@ esp_err_t waze_hud_ble_start(waze_hud_data_cb_t cb, void *ctx)
 {
     s_data_cb = cb;
     s_cb_ctx = ctx;
+    s_nav_cb = NULL;
+    s_nav_cb_ctx = NULL;
     s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
     s_notify_enabled = false;
     s_line_len = 0;
@@ -476,4 +583,16 @@ void waze_hud_ble_stop(void)
 bool waze_hud_ble_is_connected(void)
 {
     return s_conn_handle != BLE_HS_CONN_HANDLE_NONE;
+}
+
+void waze_hud_ble_set_nav_cb(waze_hud_nav_cb_t cb, void *ctx)
+{
+    s_nav_cb = cb;
+    s_nav_cb_ctx = ctx;
+}
+
+void waze_hud_ble_set_vehicle_cb(waze_hud_vehicle_cb_t cb, void *ctx)
+{
+    s_vehicle_cb = cb;
+    s_vehicle_cb_ctx = ctx;
 }

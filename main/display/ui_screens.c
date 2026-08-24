@@ -1,3 +1,19 @@
+// Car HUD UI - Layout mới:
+//
+// ┌──────────────────────────────────┐
+// │ BLE    36min-12km   ┌────┐  85% │  (status bar + biển báo nhỏ góc phải)
+// │                     │ 60 │      │
+// │                     └────┘      │
+// ├──────────────────────────────────┤
+// │  ←                              │
+// │       1.7 km                    │  (direction + distance LỚN)
+// │                                 │
+// │  CT37 Đ. Vành Đai 3            │  (tên đường)
+// ├──────────────────────────────────┤
+// │         69 km/h                 │  (tốc độ hiện tại)
+// │     ETA: 10:20 AM              │
+// └──────────────────────────────────┘
+
 #include "ui_screens.h"
 
 #include <stdio.h>
@@ -5,98 +21,50 @@
 
 #include "esp_lvgl_port.h"
 
-// Font tieng Viet tu generate (Arial Unicode -> LVGL bitmap font), xem
-// main/display/fonts/. Dung font nay cho MOI label co the chua chu co dau;
-// icon (LV_SYMBOL_*) van dung LV_FONT_DEFAULT vi la font rieng chi co bitmap
-// cho vung ky tu FontAwesome, khong co bang chu Viet.
 LV_FONT_DECLARE(lv_font_vi_14);
 LV_FONT_DECLARE(lv_font_vi_20);
 LV_FONT_DECLARE(lv_font_speed_64);
 
 typedef struct {
-    lv_obj_t *screen;             // man hinh chinh (dung de nhap nhay nen)
-    lv_obj_t *status_bar_label;   // goc tren trai: trang thai wifi/AP
-    lv_obj_t *battery_label;      // goc tren phai: % pin
-    lv_obj_t *icon_label;         // icon LV_SYMBOL_*, mau doi theo state
-    lv_obj_t *title_label;        // ten trang thai ngan, chu lon
-    lv_obj_t *subtitle_label;     // huong dan / thong bao loi / thong tin provisioning
-    lv_obj_t *text_container;     // khung chua 2 dong transcript, xep flex-column
-    lv_obj_t *user_text_label;    // "Ban: ..." transcript nguoi dung (STT)
-    lv_obj_t *ai_text_label;      // "AI: ..." transcript Gemini tra loi
-    lv_obj_t *volume_overlay;     // icon+% volume, an/hien tam thoi
+    lv_obj_t *screen;
 
-    // "Car Mode": hien thi toc do xe + bien bao gioi han
-    lv_obj_t *car_speed_label;    // "XX km/h" nho, ben duoi bien bao
-    lv_obj_t *car_limit_ring;     // vong tron xanh bao quanh, the hien % toc do/gioi han
-    lv_obj_t *car_limit_sign;     // hinh tron vien do lon, kieu bien bao gioi han
-    lv_obj_t *car_limit_label;    // so gioi han lon, ben trong bien bao
+    // Status bar (top left)
+    lv_obj_t *ble_label;
+    lv_obj_t *battery_label;
+    lv_obj_t *time_remaining_label;  // "36min - 12km"
+
+    // Speed limit sign (TOP RIGHT, nhỏ ~60x60)
+    lv_obj_t *limit_sign;
+    lv_obj_t *limit_number;
+
+    // Navigation (CENTER - phần chính)
+    lv_obj_t *nav_direction_label;   // Ký hiệu hướng rẽ LỚN (font 64)
+    lv_obj_t *nav_distance_label;    // Khoảng cách lớn (font 20)
+    lv_obj_t *nav_road_label;        // Tên đường (font 14)
+
+    // Current speed + ETA (BOTTOM)
+    lv_obj_t *speed_circle;          // Hình tròn chứa tốc độ hiện tại
+    lv_obj_t *speed_label;           // "69" số tốc độ bên trong circle
+    lv_obj_t *eta_label;             // "ETA: 10:20 AM"
+
+    // Volume overlay
+    lv_obj_t *volume_overlay;
 } ui_widgets_t;
 
 static ui_widgets_t s_ui;
 
-// Timer nhap nhay (khai bao truoc de set_texts co the huy khi chuyen man hinh).
 static lv_timer_t *s_bg_flash_timer = NULL;
 static lv_timer_t *s_limit_blink_timer = NULL;
 
-// Bat/tat toan bo widget cua che do tro ly giong noi (khong dung cho Car Mode).
-static void set_assistant_widgets_visible(bool visible)
-{
-    lv_obj_t *widgets[] = {
-        s_ui.icon_label, s_ui.title_label, s_ui.subtitle_label, s_ui.text_container,
-    };
-    for (size_t i = 0; i < sizeof(widgets) / sizeof(widgets[0]); i++) {
-        if (visible) {
-            lv_obj_clear_flag(widgets[i], LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(widgets[i], LV_OBJ_FLAG_HIDDEN);
-        }
-    }
-}
-
-static void set_icon(const char *symbol, lv_color_t color)
-{
-    lv_label_set_text(s_ui.icon_label, symbol);
-    lv_obj_set_style_text_color(s_ui.icon_label, color, 0);
-}
-
-static void set_texts(const char *title, const char *subtitle)
-{
-    set_assistant_widgets_visible(true);
-    lv_obj_add_flag(s_ui.car_speed_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(s_ui.car_limit_ring, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(s_ui.car_limit_sign, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(s_ui.title_label, title);
-    lv_label_set_text(s_ui.subtitle_label, subtitle);
-
-    // Roi Car Mode giua chung luc dang nhap nhay - huy ngay, tra man hinh ve binh thuong.
-    if (s_bg_flash_timer) {
-        lv_timer_del(s_bg_flash_timer);
-        s_bg_flash_timer = NULL;
-        lv_obj_set_style_bg_color(s_ui.screen, lv_color_black(), 0);
-    }
-    if (s_limit_blink_timer) {
-        lv_timer_del(s_limit_blink_timer);
-        s_limit_blink_timer = NULL;
-        lv_obj_set_style_border_color(s_ui.car_limit_sign, lv_color_hex(0xE02020), 0);
-    }
-}
-
-static void volume_overlay_hide_cb(lv_timer_t *timer)
-{
-    lv_obj_add_flag(s_ui.volume_overlay, LV_OBJ_FLAG_HIDDEN);
-    lv_timer_del(timer);
-}
-
-// ---- Nhap nhay nen do khi vuot toc do gioi han (~2s) ----
 static int s_bg_flash_step = 0;
 #define BG_FLASH_PERIOD_MS 250
-#define BG_FLASH_STEPS     8 // 8 x 250ms = 2s
+#define BG_FLASH_STEPS 8
 
 static void bg_flash_cb(lv_timer_t *timer)
 {
     s_bg_flash_step++;
-    bool red_on = (s_bg_flash_step % 2) == 1;
-    lv_obj_set_style_bg_color(s_ui.screen, red_on ? lv_color_hex(0x3A0000) : lv_color_black(), 0);
+    bool red = (s_bg_flash_step % 2) == 1;
+    lv_obj_set_style_bg_color(s_ui.screen, red ? lv_color_hex(0x3A0000) : lv_color_black(), 0);
     if (s_bg_flash_step >= BG_FLASH_STEPS) {
         lv_obj_set_style_bg_color(s_ui.screen, lv_color_black(), 0);
         lv_timer_del(timer);
@@ -104,29 +72,27 @@ static void bg_flash_cb(lv_timer_t *timer)
     }
 }
 
-// ---- Nhap nhay vien bien bao khi gioi han toc do thay doi (~3s) ----
 static int s_limit_blink_step = 0;
 #define LIMIT_BLINK_PERIOD_MS 350
-#define LIMIT_BLINK_STEPS     8 // 8 x 350ms = 2.8s
+#define LIMIT_BLINK_STEPS 8
 
 static void limit_blink_cb(lv_timer_t *timer)
 {
     s_limit_blink_step++;
     bool alt = (s_limit_blink_step % 2) == 1;
-    lv_obj_set_style_border_color(s_ui.car_limit_sign, alt ? lv_color_hex(0xFFDD00) : lv_color_hex(0xE02020), 0);
+    lv_obj_set_style_border_color(s_ui.limit_sign,
+        alt ? lv_color_hex(0xFFDD00) : lv_color_hex(0xE02020), 0);
     if (s_limit_blink_step >= LIMIT_BLINK_STEPS) {
-        lv_obj_set_style_border_color(s_ui.car_limit_sign, lv_color_hex(0xE02020), 0);
+        lv_obj_set_style_border_color(s_ui.limit_sign, lv_color_hex(0xE02020), 0);
         lv_timer_del(timer);
         s_limit_blink_timer = NULL;
     }
 }
 
-// Goi khi da giu lvgl_port_lock() roi (tranh lock long nhau tu cac ham
-// ui_show_*). ui_clear_transcripts() (public) se tu lock rieng.
-static void clear_transcripts_locked(void)
+static void volume_hide_cb(lv_timer_t *timer)
 {
-    lv_label_set_text(s_ui.user_text_label, "");
-    lv_label_set_text(s_ui.ai_text_label, "");
+    lv_obj_add_flag(s_ui.volume_overlay, LV_OBJ_FLAG_HIDDEN);
+    lv_timer_del(timer);
 }
 
 void ui_init(lv_display_t *disp)
@@ -137,274 +103,243 @@ void ui_init(lv_display_t *disp)
     lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
     s_ui.screen = scr;
 
-    s_ui.status_bar_label = lv_label_create(scr);
-    lv_obj_set_style_text_color(s_ui.status_bar_label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(s_ui.status_bar_label, &lv_font_vi_14, 0);
-    lv_obj_align(s_ui.status_bar_label, LV_ALIGN_TOP_LEFT, 6, 4);
-    lv_label_set_text(s_ui.status_bar_label, "");
+    // === STATUS BAR (top, y=2) ===
+    s_ui.ble_label = lv_label_create(scr);
+    lv_obj_set_style_text_color(s_ui.ble_label, lv_color_hex(0x666666), 0);
+    lv_obj_set_style_text_font(s_ui.ble_label, &lv_font_vi_14, 0);
+    lv_obj_align(s_ui.ble_label, LV_ALIGN_TOP_LEFT, 4, 2);
+    lv_label_set_text(s_ui.ble_label, "...");
 
     s_ui.battery_label = lv_label_create(scr);
-    lv_obj_set_style_text_color(s_ui.battery_label, lv_color_white(), 0);
+    lv_obj_set_style_text_color(s_ui.battery_label, lv_color_hex(0x666666), 0);
     lv_obj_set_style_text_font(s_ui.battery_label, &lv_font_vi_14, 0);
-    lv_obj_align(s_ui.battery_label, LV_ALIGN_TOP_RIGHT, -6, 4);
+    lv_obj_align(s_ui.battery_label, LV_ALIGN_TOP_RIGHT, -4, 2);
     lv_label_set_text(s_ui.battery_label, "");
 
-    s_ui.icon_label = lv_label_create(scr);
-    lv_obj_set_style_text_font(s_ui.icon_label, LV_FONT_DEFAULT, 0);
-    lv_obj_align(s_ui.icon_label, LV_ALIGN_TOP_MID, 0, 22);
-    set_icon(LV_SYMBOL_REFRESH, lv_color_hex(0xFFAA00));
+    // Thời gian còn lại + khoảng cách tổng (giữa status bar)
+    s_ui.time_remaining_label = lv_label_create(scr);
+    lv_obj_set_style_text_color(s_ui.time_remaining_label, lv_color_hex(0x888888), 0);
+    lv_obj_set_style_text_font(s_ui.time_remaining_label, &lv_font_vi_14, 0);
+    lv_obj_align(s_ui.time_remaining_label, LV_ALIGN_TOP_MID, -20, 2);
+    lv_label_set_text(s_ui.time_remaining_label, "");
 
-    s_ui.title_label = lv_label_create(scr);
-    lv_obj_set_style_text_color(s_ui.title_label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(s_ui.title_label, &lv_font_vi_20, 0);
-    lv_obj_align(s_ui.title_label, LV_ALIGN_TOP_MID, 0, 46);
+    // === SPEED LIMIT SIGN (top right, 72x72) ===
+    s_ui.limit_sign = lv_obj_create(scr);
+    lv_obj_remove_style_all(s_ui.limit_sign);
+    lv_obj_set_size(s_ui.limit_sign, 72, 72);
+    lv_obj_set_style_radius(s_ui.limit_sign, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(s_ui.limit_sign, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(s_ui.limit_sign, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(s_ui.limit_sign, lv_color_hex(0xE02020), 0);
+    lv_obj_set_style_border_width(s_ui.limit_sign, 6, 0);
+    lv_obj_align(s_ui.limit_sign, LV_ALIGN_TOP_RIGHT, -4, 20);
 
-    s_ui.subtitle_label = lv_label_create(scr);
-    lv_obj_set_style_text_color(s_ui.subtitle_label, lv_color_hex(0xAAAAAA), 0);
-    lv_obj_set_style_text_font(s_ui.subtitle_label, &lv_font_vi_14, 0);
-    lv_obj_set_style_text_align(s_ui.subtitle_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_long_mode(s_ui.subtitle_label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(s_ui.subtitle_label, 220);
-    lv_obj_align(s_ui.subtitle_label, LV_ALIGN_BOTTOM_MID, 0, -6);
-    lv_label_set_text(s_ui.subtitle_label, "");
+    s_ui.limit_number = lv_label_create(s_ui.limit_sign);
+    lv_obj_set_style_text_color(s_ui.limit_number, lv_color_black(), 0);
+    // Dùng font_speed_64 nhưng scale nhỏ lại không được trong LVGL.
+    // Dùng font_vi_20 nhưng set style bold-like (outline/shadow trick)
+    lv_obj_set_style_text_font(s_ui.limit_number, &lv_font_vi_20, 0);
+    lv_obj_set_style_text_letter_space(s_ui.limit_number, 2, 0);
+    lv_obj_center(s_ui.limit_number);
+    lv_label_set_text(s_ui.limit_number, "");
 
-    s_ui.text_container = lv_obj_create(scr);
-    lv_obj_remove_style_all(s_ui.text_container);
-    lv_obj_set_size(s_ui.text_container, 226, 130);
-    lv_obj_align(s_ui.text_container, LV_ALIGN_TOP_MID, 0, 80);
-    lv_obj_set_flex_flow(s_ui.text_container, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(s_ui.text_container, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_row(s_ui.text_container, 6, 0);
-    lv_obj_set_style_pad_left(s_ui.text_container, 4, 0);
+    // === NAVIGATION DIRECTION (DƯỚI speed circles, y=100+) ===
+    // Dùng LV_FONT_DEFAULT (có FontAwesome symbols: LEFT, RIGHT, UP, DOWN)
+    s_ui.nav_direction_label = lv_label_create(scr);
+    lv_obj_set_style_text_color(s_ui.nav_direction_label, lv_color_hex(0x33CC66), 0);
+    lv_obj_set_style_text_font(s_ui.nav_direction_label, LV_FONT_DEFAULT, 0);
+    lv_obj_align(s_ui.nav_direction_label, LV_ALIGN_LEFT_MID, 10, 15);
+    lv_label_set_text(s_ui.nav_direction_label, "");
 
-    s_ui.user_text_label = lv_label_create(s_ui.text_container);
-    lv_obj_set_style_text_color(s_ui.user_text_label, lv_color_hex(0x999999), 0);
-    lv_obj_set_style_text_font(s_ui.user_text_label, &lv_font_vi_14, 0);
-    lv_label_set_long_mode(s_ui.user_text_label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(s_ui.user_text_label, 218);
-    lv_label_set_text(s_ui.user_text_label, "");
+    // Khoảng cách tới lượt rẽ (font 20, bên phải direction)
+    s_ui.nav_distance_label = lv_label_create(scr);
+    lv_obj_set_style_text_color(s_ui.nav_distance_label, lv_color_hex(0x33FF66), 0);
+    lv_obj_set_style_text_font(s_ui.nav_distance_label, &lv_font_vi_20, 0);
+    lv_obj_align(s_ui.nav_distance_label, LV_ALIGN_LEFT_MID, 50, 15);
+    lv_label_set_text(s_ui.nav_distance_label, "");
 
-    s_ui.ai_text_label = lv_label_create(s_ui.text_container);
-    lv_obj_set_style_text_color(s_ui.ai_text_label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(s_ui.ai_text_label, &lv_font_vi_14, 0);
-    lv_label_set_long_mode(s_ui.ai_text_label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(s_ui.ai_text_label, 218);
-    lv_label_set_text(s_ui.ai_text_label, "");
+    // Tên đường sẽ rẽ vào (font 14, dưới direction)
+    s_ui.nav_road_label = lv_label_create(scr);
+    lv_obj_set_style_text_color(s_ui.nav_road_label, lv_color_hex(0xFFDD00), 0);
+    lv_obj_set_style_text_font(s_ui.nav_road_label, &lv_font_vi_14, 0);
+    lv_obj_set_style_text_align(s_ui.nav_road_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(s_ui.nav_road_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_obj_set_width(s_ui.nav_road_label, 230);
+    lv_obj_align(s_ui.nav_road_label, LV_ALIGN_LEFT_MID, 5, 50);
+    lv_label_set_text(s_ui.nav_road_label, "");
 
+    // === SPEED CIRCLE (bên trái biển báo giới hạn, 50x50) ===
+    s_ui.speed_circle = lv_obj_create(scr);
+    lv_obj_remove_style_all(s_ui.speed_circle);
+    lv_obj_set_size(s_ui.speed_circle, 50, 50);
+    lv_obj_set_style_radius(s_ui.speed_circle, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(s_ui.speed_circle, lv_color_hex(0x111111), 0);
+    lv_obj_set_style_bg_opa(s_ui.speed_circle, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(s_ui.speed_circle, lv_color_hex(0x33BBFF), 0);
+    lv_obj_set_style_border_width(s_ui.speed_circle, 3, 0);
+    // Vị trí: bên trái biển báo giới hạn (top right - 80px sang trái)
+    lv_obj_align(s_ui.speed_circle, LV_ALIGN_TOP_RIGHT, -80, 32);
+
+    s_ui.speed_label = lv_label_create(s_ui.speed_circle);
+    lv_obj_set_style_text_color(s_ui.speed_label, lv_color_hex(0x33BBFF), 0);
+    lv_obj_set_style_text_font(s_ui.speed_label, &lv_font_vi_20, 0);
+    lv_obj_set_style_text_letter_space(s_ui.speed_label, 1, 0);
+    lv_obj_center(s_ui.speed_label);
+    lv_label_set_text(s_ui.speed_label, "0");
+
+    s_ui.eta_label = lv_label_create(scr);
+    lv_obj_set_style_text_color(s_ui.eta_label, lv_color_hex(0x888888), 0);
+    lv_obj_set_style_text_font(s_ui.eta_label, &lv_font_vi_14, 0);
+    lv_obj_set_style_text_align(s_ui.eta_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(s_ui.eta_label, 230);
+    lv_obj_align(s_ui.eta_label, LV_ALIGN_BOTTOM_MID, 0, -8);
+    lv_label_set_text(s_ui.eta_label, "");
+
+    // === VOLUME OVERLAY ===
     s_ui.volume_overlay = lv_label_create(scr);
     lv_obj_set_style_text_color(s_ui.volume_overlay, lv_color_white(), 0);
-    lv_obj_set_style_text_font(s_ui.volume_overlay, &lv_font_vi_14, 0);
+    lv_obj_set_style_text_font(s_ui.volume_overlay, &lv_font_vi_20, 0);
     lv_obj_align(s_ui.volume_overlay, LV_ALIGN_CENTER, 0, 0);
     lv_obj_add_flag(s_ui.volume_overlay, LV_OBJ_FLAG_HIDDEN);
 
-    // ---- Car Mode: an mac dinh, chi hien khi ui_show_car_mode() duoc goi ----
-    // Vong tron xanh bao quanh bien bao, the hien % toc do hien tai / gioi
-    // han (vd toc do = 80% gioi han thi vong day 80%). Tao TRUOC bien bao de
-    // bien bao (opaque, nho hon) de len tren, chi lo phan vanh ngoai cua vong.
-    s_ui.car_limit_ring = lv_arc_create(scr);
-    lv_obj_remove_style(s_ui.car_limit_ring, NULL, LV_PART_KNOB);
-    lv_obj_remove_flag(s_ui.car_limit_ring, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(s_ui.car_limit_ring, 182, 182);
-    lv_arc_set_rotation(s_ui.car_limit_ring, 270);
-    lv_arc_set_bg_angles(s_ui.car_limit_ring, 0, 360);
-    lv_arc_set_range(s_ui.car_limit_ring, 0, 100);
-    lv_arc_set_value(s_ui.car_limit_ring, 0);
-    lv_obj_set_style_arc_width(s_ui.car_limit_ring, 10, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(s_ui.car_limit_ring, 10, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(s_ui.car_limit_ring, lv_color_hex(0x1A1A1A), LV_PART_MAIN);
-    lv_obj_set_style_arc_color(s_ui.car_limit_ring, lv_color_hex(0x2288FF), LV_PART_INDICATOR);
-    lv_obj_align(s_ui.car_limit_ring, LV_ALIGN_CENTER, 0, -16);
-    lv_obj_add_flag(s_ui.car_limit_ring, LV_OBJ_FLAG_HIDDEN);
-
-    // Bien bao gioi han la trong tam (to, de nhin nhat) - kieu chau Au: hinh
-    // tron nen trang, vien do day, so den lon. Toc do hien tai chi la chu
-    // nho ben duoi, mang tinh tham khao.
-    s_ui.car_limit_sign = lv_obj_create(scr);
-    lv_obj_remove_style_all(s_ui.car_limit_sign);
-    lv_obj_set_size(s_ui.car_limit_sign, 150, 150);
-    lv_obj_set_style_radius(s_ui.car_limit_sign, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(s_ui.car_limit_sign, lv_color_white(), 0);
-    lv_obj_set_style_bg_opa(s_ui.car_limit_sign, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(s_ui.car_limit_sign, lv_color_hex(0xE02020), 0);
-    lv_obj_set_style_border_width(s_ui.car_limit_sign, 8, 0);
-    lv_obj_align(s_ui.car_limit_sign, LV_ALIGN_CENTER, 0, -16);
-    lv_obj_add_flag(s_ui.car_limit_sign, LV_OBJ_FLAG_HIDDEN);
-
-    s_ui.car_limit_label = lv_label_create(s_ui.car_limit_sign);
-    lv_obj_set_style_text_color(s_ui.car_limit_label, lv_color_black(), 0);
-    lv_obj_set_style_text_font(s_ui.car_limit_label, &lv_font_speed_64, 0);
-    lv_obj_center(s_ui.car_limit_label);
-    lv_label_set_text(s_ui.car_limit_label, "0");
-
-    s_ui.car_speed_label = lv_label_create(scr);
-    lv_obj_set_style_text_color(s_ui.car_speed_label, lv_color_hex(0xAAAAAA), 0);
-    lv_obj_set_style_text_font(s_ui.car_speed_label, &lv_font_vi_20, 0);
-    lv_obj_align(s_ui.car_speed_label, LV_ALIGN_BOTTOM_MID, 0, -14);
-    lv_label_set_text(s_ui.car_speed_label, "0 km/h");
-    lv_obj_add_flag(s_ui.car_speed_label, LV_OBJ_FLAG_HIDDEN);
-
-    ui_show_connecting();
-
-    lvgl_port_unlock();
-}
-
-void ui_show_provisioning(const char *ap_ssid, const char *ap_password, bool wifi_lost)
-{
-    lvgl_port_lock(0);
-    lv_label_set_text(s_ui.status_bar_label, "Setup");
-    set_icon(LV_SYMBOL_WIFI, lv_color_hex(0xFFAA00));
-    char subtitle[144];
-    snprintf(subtitle, sizeof(subtitle), "WiFi: %s\nMật khẩu: %s\nMở trình duyệt bất kỳ trang để cài đặt",
-             ap_ssid, ap_password);
-    set_texts(wifi_lost ? "Mất kết nối WiFi" : "Cần cấu hình WiFi", subtitle);
-    clear_transcripts_locked();
-    lvgl_port_unlock();
-}
-
-void ui_show_connecting(void)
-{
-    lvgl_port_lock(0);
-    lv_label_set_text(s_ui.status_bar_label, "...");
-    set_icon(LV_SYMBOL_REFRESH, lv_color_hex(0xFFAA00));
-    set_texts("Đang kết nối WiFi", "");
-    clear_transcripts_locked();
-    lvgl_port_unlock();
-}
-
-void ui_show_idle(void)
-{
-    lvgl_port_lock(0);
-    lv_label_set_text(s_ui.status_bar_label, "WiFi");
-    set_icon(LV_SYMBOL_CALL, lv_color_hex(0x33CC66));
-    set_texts("Sẵn sàng", "Nhấn nút để nói chuyện");
-    clear_transcripts_locked();
-    lvgl_port_unlock();
-}
-
-void ui_show_listening(void)
-{
-    lvgl_port_lock(0);
-    set_icon(LV_SYMBOL_CALL, lv_color_hex(0xFF3355));
-    set_texts("Đang nghe...", "Nhấn nút để kết thúc");
-    lvgl_port_unlock();
-}
-
-void ui_show_thinking(void)
-{
-    lvgl_port_lock(0);
-    set_icon(LV_SYMBOL_LOOP, lv_color_hex(0xCC88FF));
-    set_texts("Đang xử lý...", "");
-    lvgl_port_unlock();
-}
-
-void ui_show_speaking(void)
-{
-    lvgl_port_lock(0);
-    set_icon(LV_SYMBOL_VOLUME_MAX, lv_color_hex(0x3399FF));
-    set_texts("Đang trả lời...", "");
-    lvgl_port_unlock();
-}
-
-void ui_show_error(const char *message)
-{
-    lvgl_port_lock(0);
-    set_icon(LV_SYMBOL_WARNING, lv_color_hex(0xCC0000));
-    set_texts("Lỗi", message ? message : "");
-    clear_transcripts_locked();
-    lvgl_port_unlock();
-}
-
-void ui_show_volume_overlay(uint8_t percent)
-{
-    lvgl_port_lock(0);
-    const char *icon = percent == 0 ? LV_SYMBOL_MUTE : (percent < 50 ? LV_SYMBOL_VOLUME_MID : LV_SYMBOL_VOLUME_MAX);
-    char buf[24];
-    snprintf(buf, sizeof(buf), "%s %d%%", icon, percent);
-    lv_label_set_text(s_ui.volume_overlay, buf);
-    lv_obj_clear_flag(s_ui.volume_overlay, LV_OBJ_FLAG_HIDDEN);
-    lv_timer_t *timer = lv_timer_create(volume_overlay_hide_cb, 1200, NULL);
-    lv_timer_set_repeat_count(timer, 1);
-    lvgl_port_unlock();
-}
-
-void ui_update_battery(uint8_t percent, bool charging)
-{
-    lvgl_port_lock(0);
-    char buf[24];
-    snprintf(buf, sizeof(buf), "%s%d%% %s", charging ? LV_SYMBOL_CHARGE : "", percent, LV_SYMBOL_BATTERY_FULL);
-    lv_label_set_text(s_ui.battery_label, buf);
-    lvgl_port_unlock();
-}
-
-void ui_set_user_text(const char *text)
-{
-    lvgl_port_lock(0);
-    char buf[256];
-    snprintf(buf, sizeof(buf), "Bạn: %s", text ? text : "");
-    lv_label_set_text(s_ui.user_text_label, buf);
-    lvgl_port_unlock();
-}
-
-void ui_set_ai_text(const char *text)
-{
-    lvgl_port_lock(0);
-    char buf[512];
-    snprintf(buf, sizeof(buf), "AI: %s", text ? text : "");
-    lv_label_set_text(s_ui.ai_text_label, buf);
-    lvgl_port_unlock();
-}
-
-void ui_clear_transcripts(void)
-{
-    lvgl_port_lock(0);
-    clear_transcripts_locked();
     lvgl_port_unlock();
 }
 
 void ui_show_car_mode(void)
 {
     lvgl_port_lock(0);
-    set_assistant_widgets_visible(false);
-    lv_obj_clear_flag(s_ui.car_speed_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(s_ui.car_limit_ring, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_clear_flag(s_ui.car_limit_sign, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(s_ui.limit_number, "");
+    lv_label_set_text(s_ui.speed_label, "0");
+    lv_label_set_text(s_ui.nav_direction_label, "");
+    lv_label_set_text(s_ui.nav_distance_label, "");
+    lv_label_set_text(s_ui.nav_road_label, "");
+    lv_label_set_text(s_ui.time_remaining_label, "");
+    lv_label_set_text(s_ui.eta_label, "");
+    lv_obj_add_flag(s_ui.limit_sign, LV_OBJ_FLAG_HIDDEN);
     lvgl_port_unlock();
-    ui_set_ble_connected(false); // vua bat BLE, chua co dien thoai nao ket noi
-}
-
-void ui_set_ble_connected(bool connected)
-{
-    lvgl_port_lock(0);
-    lv_label_set_text(s_ui.status_bar_label, connected ? "Da ket noi" : "Mat ket noi");
-    lv_obj_set_style_text_color(s_ui.status_bar_label, connected ? lv_color_hex(0x33CC66) : lv_color_hex(0x999999), 0);
-    lvgl_port_unlock();
+    ui_set_ble_connected(false);
 }
 
 void ui_car_update(uint16_t speed_kmh, uint16_t limit_kmh)
 {
     lvgl_port_lock(0);
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%u km/h", (unsigned)speed_kmh);
-    lv_label_set_text(s_ui.car_speed_label, buf);
-    snprintf(buf, sizeof(buf), "%u", (unsigned)limit_kmh);
-    lv_label_set_text(s_ui.car_limit_label, buf);
 
-    int percent = (limit_kmh > 0) ? ((int)speed_kmh * 100 / (int)limit_kmh) : 0;
-    if (percent < 0) {
-        percent = 0;
-    } else if (percent > 100) {
-        percent = 100;
+    // Biển báo giới hạn (góc trên phải)
+    char buf[16];
+    if (limit_kmh > 0) {
+        snprintf(buf, sizeof(buf), "%u", (unsigned)limit_kmh);
+        lv_label_set_text(s_ui.limit_number, buf);
+        lv_obj_clear_flag(s_ui.limit_sign, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_ui.limit_sign, LV_OBJ_FLAG_HIDDEN);
     }
-    lv_arc_set_value(s_ui.car_limit_ring, percent);
+
+    // Tốc độ hiện tại (trong circle)
+    snprintf(buf, sizeof(buf), "%u", (unsigned)speed_kmh);
+    lv_label_set_text(s_ui.speed_label, buf);
+
+    // Đổi màu viền circle + số nếu vượt tốc độ
+    if (limit_kmh > 0 && speed_kmh > limit_kmh) {
+        lv_obj_set_style_border_color(s_ui.speed_circle, lv_color_hex(0xFF2222), 0);
+        lv_obj_set_style_text_color(s_ui.speed_label, lv_color_hex(0xFF2222), 0);
+    } else {
+        lv_obj_set_style_border_color(s_ui.speed_circle, lv_color_hex(0x33BBFF), 0);
+        lv_obj_set_style_text_color(s_ui.speed_label, lv_color_hex(0x33BBFF), 0);
+    }
+
+    lvgl_port_unlock();
+}
+
+// Chuyển direction string thành LVGL symbol icons.
+// LV_FONT_DEFAULT (FontAwesome) có: LEFT, RIGHT, UP, DOWN, REFRESH (rotate)
+static const char *direction_to_arrow(const char *dir)
+{
+    if (!dir || !dir[0]) return "";
+    if (strcmp(dir, "turn_left") == 0) return LV_SYMBOL_LEFT;
+    if (strcmp(dir, "turn_right") == 0) return LV_SYMBOL_RIGHT;
+    if (strcmp(dir, "straight") == 0) return LV_SYMBOL_UP;
+    if (strcmp(dir, "slight_left") == 0) return LV_SYMBOL_LEFT;
+    if (strcmp(dir, "slight_right") == 0) return LV_SYMBOL_RIGHT;
+    if (strcmp(dir, "sharp_left") == 0) return LV_SYMBOL_LEFT LV_SYMBOL_LEFT;
+    if (strcmp(dir, "sharp_right") == 0) return LV_SYMBOL_RIGHT LV_SYMBOL_RIGHT;
+    if (strcmp(dir, "u_turn") == 0) return LV_SYMBOL_LOOP;
+    if (strcmp(dir, "arrive") == 0) return LV_SYMBOL_OK;
+    if (strcmp(dir, "roundabout") == 0) return LV_SYMBOL_REFRESH;
+    if (strcmp(dir, "merge") == 0) return LV_SYMBOL_UP;
+    if (strcmp(dir, "exit_right") == 0) return LV_SYMBOL_RIGHT;
+    if (strcmp(dir, "exit_left") == 0) return LV_SYMBOL_LEFT;
+    return LV_SYMBOL_UP;
+}
+
+void ui_nav_update(const char *direction, const char *distance, const char *road, const char *instruction)
+{
+    lvgl_port_lock(0);
+
+    // Direction arrow
+    if (direction && direction[0]) {
+        const char *arrow = direction_to_arrow(direction);
+        lv_label_set_text(s_ui.nav_direction_label, arrow);
+    }
+
+    // Khoảng cách
+    if (distance && distance[0]) {
+        lv_label_set_text(s_ui.nav_distance_label, distance);
+    }
+
+    // Tên đường
+    if (road && road[0]) {
+        lv_label_set_text(s_ui.nav_road_label, road);
+    }
+
+    // Parse time/eta từ instruction nếu có trong nav_data_t
+    // (sẽ được xử lý riêng qua "time" và "eta" fields)
+
+    lvgl_port_unlock();
+}
+
+void ui_nav_clear(void)
+{
+    lvgl_port_lock(0);
+    lv_label_set_text(s_ui.nav_direction_label, "");
+    lv_label_set_text(s_ui.nav_distance_label, "");
+    lv_label_set_text(s_ui.nav_road_label, "");
+    lv_label_set_text(s_ui.time_remaining_label, "");
+    lv_label_set_text(s_ui.eta_label, "");
+    lvgl_port_unlock();
+}
+
+// Cap nhat time remaining, total distance, ETA
+void ui_nav_update_meta(const char *time_remaining, const char *total_dist, const char *eta)
+{
+    lvgl_port_lock(0);
+
+    // Time remaining + total dist hiện ở status bar giữa
+    char meta[48] = "";
+    if (time_remaining && time_remaining[0]) {
+        snprintf(meta, sizeof(meta), "%s", time_remaining);
+        if (total_dist && total_dist[0]) {
+            size_t len = strlen(meta);
+            snprintf(meta + len, sizeof(meta) - len, " - %s", total_dist);
+        }
+    } else if (total_dist && total_dist[0]) {
+        snprintf(meta, sizeof(meta), "%s", total_dist);
+    }
+    lv_label_set_text(s_ui.time_remaining_label, meta);
+
+    // ETA ở dưới cùng
+    if (eta && eta[0]) {
+        char eta_buf[32];
+        snprintf(eta_buf, sizeof(eta_buf), "ETA: %s", eta);
+        lv_label_set_text(s_ui.eta_label, eta_buf);
+    }
+
     lvgl_port_unlock();
 }
 
 void ui_flash_over_limit(void)
 {
     lvgl_port_lock(0);
-    if (s_bg_flash_timer) {
-        lv_timer_del(s_bg_flash_timer);
-    }
+    if (s_bg_flash_timer) lv_timer_del(s_bg_flash_timer);
     s_bg_flash_step = 0;
     s_bg_flash_timer = lv_timer_create(bg_flash_cb, BG_FLASH_PERIOD_MS, NULL);
     lvgl_port_unlock();
@@ -413,10 +348,50 @@ void ui_flash_over_limit(void)
 void ui_flash_limit_changed(void)
 {
     lvgl_port_lock(0);
-    if (s_limit_blink_timer) {
-        lv_timer_del(s_limit_blink_timer);
-    }
+    if (s_limit_blink_timer) lv_timer_del(s_limit_blink_timer);
     s_limit_blink_step = 0;
     s_limit_blink_timer = lv_timer_create(limit_blink_cb, LIMIT_BLINK_PERIOD_MS, NULL);
     lvgl_port_unlock();
+}
+
+void ui_set_ble_connected(bool connected)
+{
+    lvgl_port_lock(0);
+    lv_label_set_text(s_ui.ble_label, connected ? "BLE" : "...");
+    lv_obj_set_style_text_color(s_ui.ble_label,
+        connected ? lv_color_hex(0x33CC66) : lv_color_hex(0x666666), 0);
+    lvgl_port_unlock();
+}
+
+void ui_update_battery(uint8_t percent, bool charging)
+{
+    lvgl_port_lock(0);
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%s%d%%", charging ? "+" : "", percent);
+    lv_label_set_text(s_ui.battery_label, buf);
+    lvgl_port_unlock();
+}
+
+void ui_show_volume_overlay(uint8_t percent)
+{
+    lvgl_port_lock(0);
+    char buf[16];
+    snprintf(buf, sizeof(buf), "Vol %d%%", percent);
+    lv_label_set_text(s_ui.volume_overlay, buf);
+    lv_obj_clear_flag(s_ui.volume_overlay, LV_OBJ_FLAG_HIDDEN);
+    lv_timer_t *t = lv_timer_create(volume_hide_cb, 1200, NULL);
+    lv_timer_set_repeat_count(t, 1);
+    lvgl_port_unlock();
+}
+
+void ui_vehicle_update(const vehicle_data_t *data)
+{
+    if (!data) return;
+    if (data->speed_kmh >= 0) {
+        lvgl_port_lock(0);
+        char buf[8];
+        snprintf(buf, sizeof(buf), "%d", data->speed_kmh);
+        lv_label_set_text(s_ui.speed_label, buf);
+        lvgl_port_unlock();
+    }
 }

@@ -115,9 +115,11 @@ esp_err_t lcd_display_init(void)
     // Buffer ve nho + 1 buffer (khong double-buffer) de tiet kiem RAM noi bo
     // DMA-capable — da xac nhan qua do thuc te tren board: buffer 40 dong x2
     // (double buffer) chiem ~38KB RAM noi bo, gay thieu RAM cho mbedtls luc
-    // ket noi TLS toi Gemini Live (MBEDTLS_ERR_SSL_ALLOC_FAILED). UI chi la
-    // man hinh trang thai don gian, khong can toc do ve nhanh nen doi hoi sinh
-    // (single buffer, 10 dong/lan) hoan toan chap nhan duoc.
+    // ket noi TLS (loi that gap phai: MBEDTLS_ERR_SSL_ALLOC_FAILED). Van con
+    // quan trong voi kien truc hien tai: cac request HTTPS toi Groq cung can
+    // RAM noi bo lien tuc cho mbedtls. UI chi la man hinh trang thai don gian,
+    // khong can toc do ve nhanh nen doi hoi sinh (single buffer, 10 dong/lan)
+    // hoan toan chap nhan duoc.
     const lvgl_port_display_cfg_t disp_cfg = {
         .io_handle = s_panel_io,
         .panel_handle = s_panel,

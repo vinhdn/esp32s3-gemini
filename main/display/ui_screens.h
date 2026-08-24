@@ -9,45 +9,45 @@
 extern "C" {
 #endif
 
-// Tao cac widget LVGL dung chung cho toan bo app. Goi 1 lan sau khi
-// lcd_display_init() da tao xong display LVGL.
 void ui_init(lv_display_t *disp);
 
-void ui_show_provisioning(const char *ap_ssid, const char *ap_password, bool wifi_lost);
-void ui_show_connecting(void);
-void ui_show_idle(void);
-void ui_show_listening(void);
-void ui_show_thinking(void);   // Gemini dang xu ly, chua co audio tra ve
-void ui_show_speaking(void);
-void ui_show_error(const char *message);
+// --- Car Mode (man hinh chinh) ---
 
-// Hien thi % volume o giua man hinh trong khoang 1.2s roi tu dong an.
-void ui_show_volume_overlay(uint8_t percent);
-
-// Cap nhat icon/% pin o goc man hinh.
-void ui_update_battery(uint8_t percent, bool charging);
-
-// Transcript: cau nguoi dung noi (STT) va cau Gemini tra loi, hien thi realtime
-// trong luc phien hoi thoai dang mo. Goi lien tuc voi noi dung da gop day du
-// (khong phai delta) - ui se tu thay the text cu.
-void ui_set_user_text(const char *text);
-void ui_set_ai_text(const char *text);
-void ui_clear_transcripts(void);
-
-// "Car Mode": so toc do lon giua man hinh + bien bao gioi han toc do (hinh
-// tron vien do) o phia tren. An toan bo widget cua che do tro ly giong noi.
+// Hien thi man hinh Car Mode (goi 1 lan khi boot).
 void ui_show_car_mode(void);
+
+// Cap nhat toc do hien tai va toc do gioi han.
+// Bien bao gioi han LUON hien thi to nhat o giua man hinh.
+// Toc do hien tai hien nho hon phia duoi.
 void ui_car_update(uint16_t speed_kmh, uint16_t limit_kmh);
 
-// Nen man hinh nhap nhay do mo ~2s (goi khi vua vuot toc do gioi han).
+// Cap nhat thong tin navigation (ten duong, huong di, khoang cach).
+// Hien thi o PHIA TREN man hinh, khong de len bien bao.
+void ui_nav_update(const char *direction, const char *distance, const char *road, const char *instruction);
+
+// Xoa thong tin navigation.
+void ui_nav_clear(void);
+
+// Nen nhap nhay do khi vuot toc do gioi han.
 void ui_flash_over_limit(void);
 
-// Vien bien bao gioi han nhap nhay vai giay (goi khi gioi han toc do doi).
+// Vien bien bao nhap nhay khi gioi han thay doi.
 void ui_flash_limit_changed(void);
 
-// Cap nhat trang thai ket noi BLE toi dien thoai, hien o goc tren trai man
-// hinh Car Mode (thay cho status_bar_label dung chung).
+// Cap nhat trang thai ket noi BLE.
 void ui_set_ble_connected(bool connected);
+
+// Cap nhat icon/% pin.
+void ui_update_battery(uint8_t percent, bool charging);
+
+// Hien thi % volume overlay tam thoi.
+void ui_show_volume_overlay(uint8_t percent);
+
+// Forward-declare vehicle_data_t
+#include "waze_hud_ble.h"
+
+// Cap nhat thong tin xe (OBD-II). Hien thi nhiet do/ap suat lop o phan duoi.
+void ui_vehicle_update(const vehicle_data_t *data);
 
 #ifdef __cplusplus
 }

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Privileged permissions cho Car Nav BLE app.
+    Đặt file này vào: /system/etc/permissions/privapp-permissions-esp32nav.xml
+    (hoặc /system/product/etc/permissions/ tùy thiết bị)
+
+    App APK phải nằm ở: /system/priv-app/CarNavBLE/CarNavBLE.apk
+
+    Các permission này chỉ được cấp cho app nằm trong priv-app.
+    Nếu app ở /data/app (cài bình thường), các permission này sẽ bị từ chối.
+-->
+<permissions>
+    <privapp-permissions package="com.esp32nav">
+        <!-- Đọc tốc độ xe từ VHAL -->
+        <permission name="android.car.permission.CAR_SPEED" />
+
+        <!-- Đọc RPM, nhiệt độ nước, nhiệt độ dầu động cơ -->
+        <permission name="android.car.permission.CAR_ENGINE_DETAILED" />
+
+        <!-- Đọc áp suất lốp (TPMS) -->
+        <permission name="android.car.permission.CAR_TIRES" />
+
+        <!-- Đọc thông tin năng lượng (pin EV, mức nhiên liệu) -->
+        <permission name="android.car.permission.CAR_ENERGY" />
+
+        <!-- Đọc trạng thái động lực học xe -->
+        <permission name="android.car.permission.CAR_DYNAMICS_STATE" />
+
+        <!-- Đọc thông tin xe (VIN, model, năm SX) -->
+        <permission name="android.car.permission.CAR_INFO" />
+
+        <!-- Đọc nhiệt độ bên ngoài -->
+        <permission name="android.car.permission.CAR_EXTERIOR_ENVIRONMENT" />
+
+        <!-- Truy cập vendor extension properties (OEM-specific) -->
+        <permission name="android.car.permission.CAR_VENDOR_EXTENSION" />
+
+        <!-- Đọc thông tin vendor permission -->
+        <permission name="android.car.permission.READ_CAR_VENDOR_PERMISSION_INFO" />
+    </privapp-permissions>
+</permissions>

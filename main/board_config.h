@@ -58,9 +58,11 @@
 // I2S full-duplex: 1 bo MCLK/BCLK/WS dung chung cho ca ADC (mic) va DAC (loa).
 // QUAN TRONG: vi dung chung 1 clock, ca 2 chieu BAT BUOC chay cung 1 sample
 // rate phan cung -> chon 16kHz (da kiem chung tren board nay) cho ca thu va
-// phat; audio 24kHz Gemini Live tra ve se duoc resample xuong 16kHz truoc khi
-// phat (xem audio_pipeline_gemini.c), tranh rui ro chinh sai he so MCLK/LRCK
-// khi thu nghiem truc tiep o 24kHz tren phan cung chua kiem chung.
+// phat; audio 24kHz tu Google TTS se duoc resample xuong 16kHz truoc khi phat
+// (xem audio_pipeline.c), tranh rui ro chinh sai he so MCLK/LRCK khi thu
+// nghiem truc tiep o 24kHz tren phan cung chua kiem chung.
+// 16kHz cung dung bang sample rate Whisper mong doi -> gui WAV len khong can
+// resample.
 #define BOARD_I2S_PORT            I2S_NUM_0
 #define BOARD_I2S_SAMPLE_RATE_HZ  16000
 #define BOARD_I2S_PIN_MCLK        GPIO_NUM_5
@@ -69,11 +71,47 @@
 #define BOARD_I2S_PIN_DOUT        GPIO_NUM_1    // ESP32 -> ES8311 (tin hieu phat ra loa)
 #define BOARD_I2S_PIN_DIN         GPIO_NUM_3    // ES8311 -> ESP32 (tin hieu mic)
 
+// ---- DMA ring cua I2S ------------------------------------------------------
+// Khai bao TUONG MINH thay vi dung mac dinh an trong I2S_CHANNEL_DEFAULT_CONFIG:
+// audio_pipeline.c BAT BUOC phai biet chinh xac dung luong DMA ring de xa het
+// audio cu truoc moi ban ghi (xem RECORD_DISCARD_SAMPLES). Truoc day dung mac
+// dinh (6 x 240 = 1440 mau = 90ms) nhung chi xa 40ms -> con ~50ms am cu lot vao
+// dau ban ghi.
+// Giu DUNG gia tri mac dinh cua I2S_CHANNEL_DEFAULT_CONFIG (6 x 240 = 1440 mau
+// = 90ms @ 16kHz). QUAN TRONG: chan_cfg nay dung chung cho CA TX va RX
+// (xem i2s_new_channel trong codec_board.c), nen giam desc_num se lam giam luon
+// dem cua duong PHAT -> de bi underrun/ngat quang khi doc TTS. Chi khai bao
+// tuong minh de audio_pipeline.c tinh duoc so mau can xa, KHONG doi gia tri.
+#define BOARD_I2S_DMA_DESC_NUM    6
+#define BOARD_I2S_DMA_FRAME_NUM   240
+
+// Do khuech dai mic (dB) cua ES8311, nap SAU esp_codec_dev_open().
+// QUAN TRONG: esp_codec_dev_open() ket thuc bang _update_codec_setting(), ham
+// nay goi esp_codec_dev_set_in_gain(dev->mic_gain) voi mic_gain = 0 (mac dinh
+// tu calloc) -> ghi de gia tri ES8311_ADC_REG16 = 0x24 ma es8311_open() vua dat,
+// keo mic ve 0dB. Vi vay PHAI tu set lai gain sau khi open, dung nhu moi vi du
+// cua Espressif (test_board.c, README deu dung 30.0).
+// 30dB - dung muc cac vi du cua Espressif dung, va da KIEM CHUNG bang phep quet
+// gain tren board that (giu yen lang, do nen nhieu tai tung muc gain):
+//   0dB -> avg 422*  12dB -> avg 11   24dB -> avg 37   42dB -> avg 380
+//   (*) 422 o 0dB KHONG phai nhieu that va khong pha vo quy luat "gain cang cao
+//   nen cang lon": phep do dau tien chay ngay sau khi codec vua mo nen doc phai
+//   nhieu DC luc mach chua on dinh (cac mau deu bang ~-235 roi tat dan, mean=-422
+//   dung bang -avg). Cac phep do sau da on dinh nen tang dung ti le voi gain
+//   (12->24dB = +12dB = 4 lan, do duoc 11->37).
+// Nen nhieu tang dung ti le voi gain (12->24dB = +12dB = 4x, do duoc 11->37)
+// => duong analog cua mic hoat dong binh thuong.
+// Suy ra o 30dB nen nhieu ~74, tieng noi (cao hon nen 10-30 lan) ~740-2200,
+// peak ~6000 - con RAT xa nguong bao hoa int16 (32767) nen khong so clip.
+// KHONG ha xuong 18dB: khi do tieng noi chi con ~260-780, qua sat nguong VAD
+// nen de bi bo sot.
+#define BOARD_MIC_GAIN_DB         30.0f
+
 #define BOARD_PIN_PA_ENABLE       GPIO_NUM_8    // bat/tat cong suat loa (power amp)
 
 // ---- Nut bam ----------------------------------------------------------------
 // Nut noi GND, dung internal pull-up, active level = 0 (nhan xuong).
-// BOOT_BUTTON (GPIO0) duoc dung lam nut push-to-talk noi chuyen voi Gemini —
+// BOOT_BUTTON (GPIO0) duoc dung lam nut bat dau ghi am cau hoi cho tro ly —
 // day cung la chan strapping BOOT cua ESP32-S3, nhung chi anh huong luc
 // reset/nap firmware, khong anh huong khi doc GPIO luc runtime nen dung duoc.
 #define BOARD_PIN_BTN_TALK        GPIO_NUM_0

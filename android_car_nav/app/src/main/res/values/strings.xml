@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Car Nav BLE</string>
+    <string name="accessibility_service_description">Đọc thông tin tốc độ giới hạn, tốc độ hiện tại và dẫn đường từ Vietmap Live, DatMap, Google Maps để gửi sang ESP32 HUD hiển thị trên xe.</string>
+</resources>

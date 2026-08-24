@@ -2,11 +2,8 @@ idf_component_register(
     SRCS
         "app_main.c"
         "nvs_settings.c"
-        "wifi/wifi_prov.c"
-        "wifi/dns_server.c"
-        "wifi/captive_http.c"
         "audio/codec_board.c"
-        "audio/audio_pipeline_gemini.c"
+        "audio/audio_pipeline.c"
         "audio/alert_sound.c"
         "display/lcd_display.c"
         "display/ui_screens.c"
@@ -16,31 +13,22 @@ idf_component_register(
         "input/buttons.c"
         "power/battery_monitor.c"
         "power/status_led.c"
-        "gemini/gemini_live_client.c"
         "ble/waze_hud_ble.c"
     INCLUDE_DIRS
         "."
-        "wifi"
         "audio"
         "display"
         "input"
         "power"
-        "gemini"
         "ble"
     REQUIRES
         nvs_flash
-        esp_wifi
-        esp_netif
         esp_event
-        esp_http_server
         driver
         esp_adc
         esp_lcd
         esp_timer
         json
-        mbedtls
-        lwip
-        esp_websocket_client
         esp_codec_dev
         esp_lvgl_port
         lvgl

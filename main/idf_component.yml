@@ -1,10 +1,7 @@
 dependencies:
   idf: ">=5.1"
-  # Codec ES8311 (I2C control + I2S data). Component espressif/es8311 rieng le da
-  # deprecated, esp_codec_dev la lop truu tuong hien tai Espressif khuyen dung.
+  # Codec ES8311 (I2C control + I2S data)
   espressif/esp_codec_dev: "^1.6"
-  # LVGL port glue cho esp_lcd (khoi tao task ve, input device, tick...)
+  # LVGL port glue cho esp_lcd
   espressif/esp_lvgl_port: "^2.8"
   lvgl/lvgl: "^9.5"
-  # WebSocket client (wss://) dung de ket noi Gemini Live API
-  espressif/esp_websocket_client: "^1.8"

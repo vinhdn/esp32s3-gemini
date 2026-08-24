@@ -2696,13 +2696,6 @@ CONFIG_CODEC_TAS5805M_SUPPORT=y
 # end of ESP LVGL PORT
 
 #
-# ESP WebSocket client
-#
-# CONFIG_ESP_WS_CLIENT_ENABLE_DYNAMIC_BUFFER is not set
-# CONFIG_ESP_WS_CLIENT_SEPARATE_TX_LOCK is not set
-# end of ESP WebSocket client
-
-#
 # LVGL configuration
 #
 CONFIG_LV_CONF_SKIP=y
