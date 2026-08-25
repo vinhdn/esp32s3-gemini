@@ -16,7 +16,9 @@ class NavigationListenerService : NotificationListenerService() {
         private const val VIETMAP_PACKAGE = "vn.vietmap.live"
         private val VIETMAP_PACKAGES = arrayOf(
             "vn.vietmap.live",
+            "vn.vietmap.live.v2",
             "vn.vietmap.vietmaplive",
+            "vn.vietmap.vietmap_map",
             "com.vietmap.live",
             "vn.vietmap.navi",
             "com.vietmap.navigator"

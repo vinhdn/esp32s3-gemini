@@ -12,24 +12,29 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
-import com.esp32nav.model.BleConnectionState
 import com.esp32nav.ui.screens.MainScreen
 import com.esp32nav.ui.theme.CarNavTheme
-import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
 
+/**
+ * MainActivity chỉ hiển thị UI.
+ *
+ * Mọi logic BLE (scan, connect, observe state, update notification)
+ * đã được chuyển sang BleForegroundService + CarNavApplication.
+ * Activity có thể bị destroy/recreate bất cứ lúc nào mà không ảnh hưởng
+ * đến kết nối BLE hay foreground service notification.
+ */
 class MainActivity : ComponentActivity() {
 
     private val app by lazy { application as CarNavApplication }
-    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
         val allGranted = results.values.all { it }
         if (allGranted) {
-            startBle()
+            // Permissions granted → đảm bảo foreground service đang chạy
+            // BLE scan đã được Application/BootReceiver quản lý, không cần gọi lại ở đây
+            app.startForegroundService()
         }
     }
 
@@ -53,23 +58,6 @@ class MainActivity : ComponentActivity() {
         }
 
         checkAndRequestPermissions()
-        observeBleState()
-    }
-
-    private fun observeBleState() {
-        app.bleManager.bleState.onEach { state ->
-            val status = when (state.connectionState) {
-                BleConnectionState.CONNECTED -> "Connected to ${state.deviceName}"
-                BleConnectionState.CONNECTING -> "Connecting..."
-                BleConnectionState.SCANNING -> "Scanning..."
-                BleConnectionState.DISCONNECTED -> "Disconnected"
-            }
-            app.updateForegroundServiceStatus(status)
-        }.launchIn(scope)
-
-        app.bleManager.receivedMessages.onEach { msg ->
-            app.addLogEntry("RX", msg)
-        }.launchIn(scope)
     }
 
     private fun checkAndRequestPermissions() {
@@ -77,7 +65,8 @@ class MainActivity : ComponentActivity() {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (needed.isEmpty()) {
-            startBle()
+            // Đã có quyền, đảm bảo service chạy (idempotent nếu đã chạy)
+            app.startForegroundService()
         } else {
             permissionLauncher.launch(needed.toTypedArray())
         }
@@ -104,15 +93,5 @@ class MainActivity : ComponentActivity() {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         }
         return permissions
-    }
-
-    private fun startBle() {
-        app.startForegroundService()
-        app.bleManager.startScan()
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        scope.cancel()
     }
 }

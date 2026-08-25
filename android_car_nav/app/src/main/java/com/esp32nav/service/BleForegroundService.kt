@@ -11,6 +11,9 @@ import android.util.Log
 import com.esp32nav.CarNavApplication
 import com.esp32nav.MainActivity
 import com.esp32nav.model.BleConnectionState
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 
 class BleForegroundService : Service() {
 
@@ -20,22 +23,61 @@ class BleForegroundService : Service() {
         const val NOTIFICATION_ID = 1001
     }
 
+    private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         val notification = buildNotification("Scanning for HUD...")
         startForeground(NOTIFICATION_ID, notification)
         Log.i(TAG, "Foreground service created")
+
+        // Service tự observe BLE state → cập nhật notification
+        // Scope này sống cùng service, KHÔNG phụ thuộc vào Activity
+        observeBleState()
+        observeReceivedMessages()
+    }
+
+    /**
+     * Observe BLE connection state và tự cập nhật notification.
+     * Chạy trong serviceScope → chỉ bị cancel khi service destroy.
+     */
+    private fun observeBleState() {
+        val app = application as? CarNavApplication ?: return
+        app.bleManager.bleState.onEach { state ->
+            val status = when (state.connectionState) {
+                BleConnectionState.CONNECTED -> "Connected to ${state.deviceName}"
+                BleConnectionState.CONNECTING -> "Connecting..."
+                BleConnectionState.SCANNING -> "Scanning..."
+                BleConnectionState.DISCONNECTED -> "Disconnected"
+            }
+            updateNotification(status)
+        }.launchIn(serviceScope)
+    }
+
+    /**
+     * Observe RX messages từ BLE → ghi vào Application log.
+     * Trước đây nằm ở Activity scope → mất khi Activity destroy.
+     */
+    private fun observeReceivedMessages() {
+        val app = application as? CarNavApplication ?: return
+        app.bleManager.receivedMessages.onEach { msg ->
+            app.addLogEntry("RX", msg)
+        }.launchIn(serviceScope)
+    }
+
+    private fun updateNotification(status: String) {
+        val notification = buildNotification(status)
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.notify(NOTIFICATION_ID, notification)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val status = intent?.getStringExtra("status")
 
         if (status != null) {
-            // Cập nhật notification text
-            val notification = buildNotification(status)
-            val nm = getSystemService(NotificationManager::class.java)
-            nm.notify(NOTIFICATION_ID, notification)
+            // Cập nhật notification text (legacy path, giữ lại cho compatibility)
+            updateNotification(status)
         } else {
             // Service restart (sau khi bị kill) - tự động scan lại BLE
             Log.i(TAG, "Service restarted, auto-reconnecting BLE...")
@@ -56,8 +98,10 @@ class BleForegroundService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        serviceScope.cancel()
         Log.w(TAG, "Foreground service destroyed")
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        @Suppress("DEPRECATION")
+        stopForeground(true) // Compatible with API 28+ (STOP_FOREGROUND_REMOVE is API 33+)
     }
 
     private fun createNotificationChannel() {

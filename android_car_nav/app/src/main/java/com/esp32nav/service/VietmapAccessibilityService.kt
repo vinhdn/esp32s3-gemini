@@ -26,7 +26,9 @@ class VietmapAccessibilityService : AccessibilityService() {
         // Packages to monitor
         val MONITORED_PACKAGES = arrayOf(
             "vn.vietmap.live",
+            "vn.vietmap.live.v2",
             "vn.vietmap.vietmaplive",
+            "vn.vietmap.vietmap_map",
             "com.vietmap.live",
             "vn.vietmap.navi",
             "com.vietmap.navigator",
@@ -45,6 +47,8 @@ class VietmapAccessibilityService : AccessibilityService() {
     }
 
     private var lastDebugLog = 0L
+    private var lastProactiveScan = 0L
+    private val PROACTIVE_SCAN_INTERVAL = 2000L  // Scan every 2 seconds
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -83,17 +87,81 @@ class VietmapAccessibilityService : AccessibilityService() {
         if (event == null) return
         val packageName = event.packageName?.toString() ?: return
 
+        // Proactive scan: even if event is from a different package, periodically scan
+        // all windows for Vietmap data (handles secondary display where events might not fire)
+        val now = System.currentTimeMillis()
+        if (now - lastProactiveScan > PROACTIVE_SCAN_INTERVAL) {
+            lastProactiveScan = now
+            proactiveScanAllWindows()
+        }
+
         // Filter only monitored packages
         val isMonitored = MONITORED_PACKAGES.any { packageName.contains(it) || it.contains(packageName) }
         if (!isMonitored) return
 
         isNavigating = true
 
+        // Debug: log event source info periodically
+        if (now - lastDebugLog > 10000) {
+            Log.d(TAG, "📨 Event: type=${event.eventType} pkg=$packageName class=${event.className} " +
+                    "windowId=${event.windowId} source=${event.source?.packageName}")
+        }
+
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
                 processWindowContent(packageName)
             }
+        }
+    }
+
+    /**
+     * Proactive scan: quét tất cả windows tìm Vietmap/DatMap/Maps
+     * ngay cả khi event đến từ package khác (SystemUI, Launcher, etc.)
+     *
+     * Đây là giải pháp cho trường hợp Vietmap ở secondary display:
+     * accessibility event vẫn fire từ primary display nhưng không trigger parse
+     * cho Vietmap vì package name khác.
+     */
+    private fun proactiveScanAllWindows() {
+        try {
+            val allWindows = windows ?: return
+            for (window in allWindows) {
+                try {
+                    val root = window.root ?: continue
+                    val windowPkg = root.packageName?.toString() ?: ""
+
+                    val matchedMonitor = MONITORED_PACKAGES.firstOrNull {
+                        windowPkg.contains(it) || it.contains(windowPkg)
+                    }
+
+                    if (matchedMonitor != null) {
+                        val allTexts = mutableListOf<NodeTextInfo>()
+                        try {
+                            collectAllTexts(root, allTexts, 0)
+                            if (allTexts.isNotEmpty()) {
+                                isNavigating = true
+                                when {
+                                    windowPkg.contains("vietmap") -> parseVietmapData(allTexts)
+                                    windowPkg.contains("datmap") -> parseDatMapData(allTexts)
+                                    windowPkg.contains("google.android.apps.maps") -> parseGoogleMapsData(allTexts)
+                                }
+                            }
+                        } finally {
+                            root.recycle()
+                        }
+                    } else {
+                        root.recycle()
+                    }
+                } catch (e: Exception) {
+                    // Skip problematic windows (widgets, system overlays, etc.)
+                    continue
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Proactive scan failed: ${e.message}")
         }
     }
 
@@ -109,16 +177,63 @@ class VietmapAccessibilityService : AccessibilityService() {
     }
 
     private fun processWindowContent(packageName: String) {
-        val rootNode = try {
-            rootInActiveWindow
+        // Strategy: iterate ALL accessible windows to find ones matching the package.
+        // This works even when the target app is on a secondary display or not the active window.
+        val rootNodes = mutableListOf<AccessibilityNodeInfo>()
+
+        try {
+            val allWindows = windows
+            if (allWindows.isNullOrEmpty()) {
+                // Fallback to rootInActiveWindow if windows API unavailable
+                val fallback = rootInActiveWindow
+                if (fallback != null) rootNodes.add(fallback)
+            } else {
+                for (window in allWindows) {
+                    val root = try { window.root } catch (e: Exception) { null }
+                    if (root == null) continue
+                    // Check if this window belongs to the target package
+                    // by inspecting root node's package name
+                    val windowPkg = root.packageName?.toString() ?: ""
+                    val matchesPackage = MONITORED_PACKAGES.any {
+                        windowPkg.contains(it) || it.contains(windowPkg)
+                    }
+                    // Also accept if event packageName matches
+                    val matchesEvent = windowPkg.contains(packageName) || packageName.contains(windowPkg)
+
+                    if (matchesPackage || matchesEvent) {
+                        rootNodes.add(root)
+                    } else {
+                        root.recycle()
+                    }
+                }
+
+                // If no matching window found via windows API, try rootInActiveWindow
+                if (rootNodes.isEmpty()) {
+                    val fallback = try { rootInActiveWindow } catch (e: Exception) { null }
+                    if (fallback != null) rootNodes.add(fallback)
+                }
+            }
         } catch (e: Exception) {
-            Log.w(TAG, "Cannot get rootInActiveWindow: ${e.message}")
+            Log.w(TAG, "Cannot enumerate windows, falling back to rootInActiveWindow: ${e.message}")
+            val fallback = try { rootInActiveWindow } catch (ex: Exception) { null }
+            if (fallback != null) rootNodes.add(fallback)
+        }
+
+        if (rootNodes.isEmpty()) {
+            // Debug: log when we can't find any window
+            if (System.currentTimeMillis() - lastDebugLog > 5000) {
+                lastDebugLog = System.currentTimeMillis()
+                Log.w(TAG, "⚠️ No accessible window found for package: $packageName")
+                logAllWindows()
+            }
             return
-        } ?: return
+        }
 
         try {
             val allTexts = mutableListOf<NodeTextInfo>()
-            collectAllTexts(rootNode, allTexts, 0)
+            for (root in rootNodes) {
+                collectAllTexts(root, allTexts, 0)
+            }
 
             when {
                 packageName.contains("vietmap") -> parseVietmapData(allTexts)
@@ -129,7 +244,7 @@ class VietmapAccessibilityService : AccessibilityService() {
             // Debug log every 5 seconds
             if (System.currentTimeMillis() - lastDebugLog > 5000) {
                 lastDebugLog = System.currentTimeMillis()
-                Log.d(TAG, "=== [$packageName] ${allTexts.size} nodes ===")
+                Log.d(TAG, "=== [$packageName] ${allTexts.size} nodes from ${rootNodes.size} window(s) ===")
                 allTexts.forEach { info ->
                     if (info.text.isNotBlank() || info.contentDescription.isNotBlank()) {
                         Log.d(TAG, "  d=${info.depth} [${info.viewId}] cls=${info.className} text='${info.text}' desc='${info.contentDescription}'")
@@ -139,81 +254,130 @@ class VietmapAccessibilityService : AccessibilityService() {
         } catch (e: Exception) {
             Log.e(TAG, "Error processing window: ${e.message}")
         } finally {
-            rootNode.recycle()
+            rootNodes.forEach { it.recycle() }
+        }
+    }
+
+    /**
+     * Log tất cả windows đang accessible — dùng để debug multi-display.
+     */
+    private fun logAllWindows() {
+        try {
+            val allWindows = windows
+            Log.i(TAG, "🪟 Total accessible windows: ${allWindows?.size ?: 0}")
+            allWindows?.forEachIndexed { idx, window ->
+                val root = window.root
+                val pkg = root?.packageName?.toString() ?: "(no root)"
+                val title = window.title?.toString() ?: "(no title)"
+                Log.i(TAG, "  [$idx] pkg=$pkg title='$title' type=${window.type} layer=${window.layer} display=${window.displayId}")
+                root?.recycle()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Cannot log windows: ${e.message}")
         }
     }
 
     /**
      * Parse Vietmap Live node tree.
-     * Format: contentDescription = "{speed}\nkm/h\n{limit}"
-     *         contentDescription = "{road_name}\n{district}, {city}"
-     *         hoặc text node riêng chứa số tốc độ giới hạn
      *
-     * Trên một số head unit, Vietmap hiển thị speed limit dưới dạng:
-     * - ImageView có contentDescription = "50" (số tốc độ giới hạn)
-     * - TextView text = "50" gần biển báo
+     * Trên head unit Baic (ActivityView/Virtual Display), node tree có view IDs:
+     * - vn.vietmap.live:id/current_speed_textview → tốc độ hiện tại (text = "0", "45", etc.)
+     * - vn.vietmap.live:id/unit_textView → "km/h"
+     * - vn.vietmap.live:id/speed_limit_widget_text_view → tốc độ giới hạn ("50", "60", etc.)
+     * - vn.vietmap.live:id/warning_speed_distance_text_view → khoảng cách camera ("43m")
+     * - vn.vietmap.live:id/textView2 → "VIETMAP LIVE" (app name, bỏ qua)
+     *
+     * Fallback cho các head unit khác:
+     * - contentDescription = "{speed}\nkm/h\n{limit}"
+     * - contentDescription = "{road_name}\n{district}, {city}"
      */
     private fun parseVietmapData(texts: List<NodeTextInfo>) {
         var foundSpeedLimit = 0
         var foundCurrentSpeed = -1
         var foundRoadName = ""
+        var usedViewIdParsing = false
 
+        // === Phase 1: Parse by view ID (ưu tiên cao nhất) ===
         for (info in texts) {
-            val desc = info.contentDescription.trim()
-            val text = info.text.trim()
-            val combined = desc.ifBlank { text }
-
-            if (combined.isBlank()) continue
-
-            // Format: "{speed}\nkm/h\n{limit}"
-            if (combined.contains("km/h", ignoreCase = true)) {
-                val lines = combined.split("\n").map { it.trim() }
-                if (lines.size >= 3) {
-                    val speed = lines[0].toIntOrNull()
-                    val limit = lines[2].toIntOrNull()
-                    if (speed != null && speed in 0..300) foundCurrentSpeed = speed
-                    if (limit != null && limit in 5..200) foundSpeedLimit = limit
-                } else if (lines.size == 2) {
-                    val speed = lines[0].toIntOrNull()
-                    if (speed != null && speed in 0..300) foundCurrentSpeed = speed
-                }
-                continue
-            }
-
-            // Fallback: view ID based detection
             val viewId = info.viewId.lowercase()
-            if (viewId.contains("speed_limit") || viewId.contains("speedlimit") || 
-                viewId.contains("max_speed") || viewId.contains("limit")) {
-                val num = extractNumber("$text $desc")
-                if (num in 5..200) foundSpeedLimit = num
-                continue
-            }
-            if (viewId.contains("current_speed") || viewId.contains("speedometer") ||
-                viewId.contains("speed_value")) {
-                val num = extractNumber("$text $desc")
-                if (num in 0..300) foundCurrentSpeed = num
-                continue
-            }
+            val text = info.text.trim()
 
-            // Số đơn thuần trong biển báo tốc độ (ImageView/TextView không có viewId)
-            // Thường nằm ở node nhỏ, className là ImageView hoặc FrameLayout
-            if (combined.length <= 3 && combined.all { it.isDigit() }) {
-                val num = combined.toIntOrNull()
-                if (num != null && num in 20..150 && num % 10 == 0) {
-                    // Số tròn chục (20,30,40,50,60,70,80,90,100,110,120) → speed limit
-                    if (foundSpeedLimit == 0) foundSpeedLimit = num
+            when {
+                viewId.contains("current_speed_textview") || viewId.contains("current_speed") ||
+                viewId.contains("speedometer") || viewId.contains("speed_value") -> {
+                    val num = text.replace(Regex("[^0-9]"), "").toIntOrNull()
+                    if (num != null && num in 0..300) {
+                        foundCurrentSpeed = num
+                        usedViewIdParsing = true
+                    }
                 }
-                continue
+                viewId.contains("speed_limit_widget") || viewId.contains("speed_limit") ||
+                viewId.contains("speedlimit") || viewId.contains("max_speed") ||
+                viewId.contains("limit") -> {
+                    val num = text.replace(Regex("[^0-9]"), "").toIntOrNull()
+                    if (num != null && num in 5..200) {
+                        foundSpeedLimit = num
+                        usedViewIdParsing = true
+                    }
+                }
+                viewId.contains("road_name") || viewId.contains("street_name") ||
+                viewId.contains("route_name") -> {
+                    if (text.isNotBlank() && text.length in 2..100) {
+                        foundRoadName = text
+                        usedViewIdParsing = true
+                    }
+                }
             }
+        }
 
-            // Road name: doesn't contain km/h, has meaningful text
-            if (combined.length > 3 && !combined.all { it.isDigit() }) {
-                val lines = combined.split("\n").map { it.trim() }
-                val candidate = lines.firstOrNull() ?: ""
-                // Avoid picking up random UI elements
-                if (candidate.length in 4..100 && !candidate.contains("km/h") &&
-                    !candidate.matches(Regex("""^\d+.*"""))) {
-                    foundRoadName = candidate
+        // === Phase 2: Fallback content-based parsing (nếu Phase 1 không tìm được) ===
+        if (!usedViewIdParsing) {
+            for (info in texts) {
+                val desc = info.contentDescription.trim()
+                val text = info.text.trim()
+                val combined = desc.ifBlank { text }
+                val viewId = info.viewId.lowercase()
+
+                if (combined.isBlank()) continue
+
+                // Skip known non-data view IDs
+                if (viewId.contains("textview2") || viewId.contains("unit_textview") ||
+                    viewId.contains("warning_speed_distance")) continue
+
+                // Format: "{speed}\nkm/h\n{limit}"
+                if (combined.contains("km/h", ignoreCase = true)) {
+                    val lines = combined.split("\n").map { it.trim() }
+                    if (lines.size >= 3) {
+                        val speed = lines[0].toIntOrNull()
+                        val limit = lines[2].toIntOrNull()
+                        if (speed != null && speed in 0..300) foundCurrentSpeed = speed
+                        if (limit != null && limit in 5..200) foundSpeedLimit = limit
+                    } else if (lines.size == 2) {
+                        val speed = lines[0].toIntOrNull()
+                        if (speed != null && speed in 0..300) foundCurrentSpeed = speed
+                    }
+                    continue
+                }
+
+                // Số đơn thuần trong biển báo tốc độ
+                if (combined.length <= 3 && combined.all { it.isDigit() }) {
+                    val num = combined.toIntOrNull()
+                    if (num != null && num in 20..150 && num % 10 == 0) {
+                        if (foundSpeedLimit == 0) foundSpeedLimit = num
+                    }
+                    continue
+                }
+
+                // Road name: doesn't contain km/h, has meaningful text
+                if (combined.length > 3 && !combined.all { it.isDigit() } && viewId.isBlank()) {
+                    val lines = combined.split("\n").map { it.trim() }
+                    val candidate = lines.firstOrNull() ?: ""
+                    if (candidate.length in 4..100 && !candidate.contains("km/h") &&
+                        !candidate.contains("VIETMAP", ignoreCase = true) &&
+                        !candidate.contains("Phiên bản", ignoreCase = true) &&
+                        !candidate.matches(Regex("""^\d+.*"""))) {
+                        foundRoadName = candidate
+                    }
                 }
             }
         }
