@@ -1,9 +1,11 @@
 package com.esp32nav
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -12,18 +14,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import com.esp32nav.stream.MapStreamManager
 import com.esp32nav.ui.screens.MainScreen
 import com.esp32nav.ui.theme.CarNavTheme
 
-/**
- * MainActivity chỉ hiển thị UI.
- *
- * Mọi logic BLE (scan, connect, observe state, update notification)
- * đã được chuyển sang BleForegroundService + CarNavApplication.
- * Activity có thể bị destroy/recreate bất cứ lúc nào mà không ảnh hưởng
- * đến kết nối BLE hay foreground service notification.
- */
 class MainActivity : ComponentActivity() {
+
+    companion object {
+        private const val TAG = "MainActivity"
+    }
 
     private val app by lazy { application as CarNavApplication }
 
@@ -32,9 +31,25 @@ class MainActivity : ComponentActivity() {
     ) { results ->
         val allGranted = results.values.all { it }
         if (allGranted) {
-            // Permissions granted → đảm bảo foreground service đang chạy
-            // BLE scan đã được Application/BootReceiver quản lý, không cần gọi lại ở đây
             app.startForegroundService()
+            requestScreenCapture()
+        }
+    }
+
+    // Screen capture permission launcher
+    private val screenCaptureLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        Log.i(TAG, "Screen capture result: ${result.resultCode}")
+        if (result.resultCode == RESULT_OK) {
+            // Android 14+: foreground service (mediaProjection type) PHẢI chạy
+            // trước khi getMediaProjection. Start FGS rồi delay nhỏ.
+            app.startForegroundService()
+            window.decorView.postDelayed({
+                app.mapStreamManager.onPermissionResult(result.resultCode, result.data)
+                app.startMapStream()
+                Log.i(TAG, "Map streaming started!")
+            }, 500)
         }
     }
 
@@ -65,10 +80,18 @@ class MainActivity : ComponentActivity() {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (needed.isEmpty()) {
-            // Đã có quyền, đảm bảo service chạy (idempotent nếu đã chạy)
             app.startForegroundService()
+            requestScreenCapture()
         } else {
             permissionLauncher.launch(needed.toTypedArray())
+        }
+    }
+
+    private fun requestScreenCapture() {
+        // Request screen capture permission nếu chưa streaming
+        if (!app.mapStreamManager.isStreamingActive()) {
+            val intent = app.mapStreamManager.getProjectionIntent()
+            screenCaptureLauncher.launch(intent)
         }
     }
 

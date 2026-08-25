@@ -34,14 +34,9 @@ static const char *TAG = "img_stream";
 // ------- Frame assembly state (accessed from BLE context) -------
 typedef struct {
     uint8_t *jpeg_buf;          // PSRAM buffer for assembled JPEG data
-    uint16_t chunk_sizes[IMG_MAX_CHUNKS]; // size of each chunk's data payload
-    uint16_t chunk_offsets[IMG_MAX_CHUNKS]; // byte offset in jpeg_buf
-    uint8_t total_chunks;       // expected total from header
-    uint8_t received_mask[(IMG_MAX_CHUNKS + 7) / 8]; // bitmask of received chunks
-    uint8_t received_count;     // how many chunks received so far
-    uint8_t frame_id;           // current frame being assembled
     uint32_t total_size;        // total bytes of JPEG data accumulated
-    bool active;                // assembly in progress
+    uint8_t prev_byte;          // byte trước (để detect 0xFF 0xD8 / 0xFF 0xD9)
+    bool active;                // assembly in progress (đang giữa SOI và EOI)
 } frame_assembly_t;
 
 // ------- Module state -------
@@ -183,6 +178,8 @@ static void decode_task(void *arg)
 
         // Invalidate LVGL canvas so it redraws
         if (lvgl_port_lock(100)) {
+            lv_obj_clear_flag(s_canvas, LV_OBJ_FLAG_HIDDEN); // hiện canvas map
+            lv_obj_move_foreground(s_canvas);                // đưa lên trên cùng
             lv_obj_invalidate(s_canvas);
             lvgl_port_unlock();
         }
@@ -193,116 +190,64 @@ static void decode_task(void *arg)
 
 // ------- Frame assembly (called from BLE context) -------
 
-static inline void set_chunk_bit(uint8_t *mask, uint8_t idx)
-{
-    mask[idx / 8] |= (1 << (idx % 8));
-}
-
-static inline bool get_chunk_bit(const uint8_t *mask, uint8_t idx)
-{
-    return (mask[idx / 8] & (1 << (idx % 8))) != 0;
-}
-
 void img_stream_feed_chunk(const uint8_t *data, uint16_t len)
 {
-    if (!s_initialized || len < 3) {
+    if (!s_initialized || len < 1) {
         return;
     }
 
     if (xSemaphoreTake(s_assembly_mutex, pdMS_TO_TICKS(10)) != pdTRUE) {
-        ESP_LOGW(TAG, "feed_chunk: khong lay duoc mutex, bo chunk");
         return;
     }
 
-    // Detect first chunk of a new frame: starts with [0xFF, 0xD8, frame_id, total_chunks]
-    if (len >= 4 && data[0] == 0xFF && data[1] == 0xD8) {
-        uint8_t frame_id = data[2];
-        uint8_t total_chunks = data[3];
+    // Raw JPEG stream: detect SOI (0xFF 0xD8) = frame start, EOI (0xFF 0xD9) = frame end.
+    // Android gửi JPEG chia thành các chunk 244 bytes tuần tự, không có header.
+    for (uint16_t i = 0; i < len; i++) {
+        uint8_t b = data[i];
 
-        if (total_chunks == 0 || total_chunks > IMG_MAX_CHUNKS) {
-            ESP_LOGW(TAG, "Frame %u: total_chunks=%u khong hop le", frame_id, total_chunks);
-            xSemaphoreGive(s_assembly_mutex);
-            return;
-        }
-
-        // Start new frame (discard any in-progress assembly)
-        memset(&s_assembly.received_mask, 0, sizeof(s_assembly.received_mask));
-        s_assembly.frame_id = frame_id;
-        s_assembly.total_chunks = total_chunks;
-        s_assembly.received_count = 0;
-        s_assembly.total_size = 0;
-        s_assembly.active = true;
-
-        // Chunk 0 data starts after 4-byte header
-        uint16_t payload_len = len - 4;
-        if (payload_len > 0 && s_assembly.total_size + payload_len <= IMG_MAX_JPEG_SIZE) {
-            s_assembly.chunk_offsets[0] = 0;
-            s_assembly.chunk_sizes[0] = payload_len;
-            memcpy(s_assembly.jpeg_buf, data + 4, payload_len);
-            s_assembly.total_size = payload_len;
-            set_chunk_bit(s_assembly.received_mask, 0);
-            s_assembly.received_count = 1;
-        }
-    } else if (s_assembly.active && len >= 2) {
-        // Subsequent chunk: [frame_id, chunk_index, ...data...]
-        uint8_t frame_id = data[0];
-        uint8_t chunk_index = data[1];
-
-        if (frame_id != s_assembly.frame_id) {
-            // Chunk for a different/old frame, ignore
-            xSemaphoreGive(s_assembly_mutex);
-            return;
-        }
-        if (chunk_index >= s_assembly.total_chunks || chunk_index == 0) {
-            // Invalid index or duplicate first chunk marker
-            xSemaphoreGive(s_assembly_mutex);
-            return;
-        }
-        if (get_chunk_bit(s_assembly.received_mask, chunk_index)) {
-            // Already received this chunk, ignore duplicate
-            xSemaphoreGive(s_assembly_mutex);
-            return;
-        }
-
-        uint16_t payload_len = len - 2;
-        if (payload_len > 0 && s_assembly.total_size + payload_len <= IMG_MAX_JPEG_SIZE) {
-            s_assembly.chunk_offsets[chunk_index] = (uint16_t)s_assembly.total_size;
-            s_assembly.chunk_sizes[chunk_index] = payload_len;
-            memcpy(s_assembly.jpeg_buf + s_assembly.total_size, data + 2, payload_len);
-            s_assembly.total_size += payload_len;
-            set_chunk_bit(s_assembly.received_mask, chunk_index);
-            s_assembly.received_count++;
-        } else {
-            ESP_LOGW(TAG, "Frame %u: vuot qua buffer %u bytes", frame_id, IMG_MAX_JPEG_SIZE);
-        }
-    } else {
-        xSemaphoreGive(s_assembly_mutex);
-        return;
-    }
-
-    // Check if frame is complete
-    if (s_assembly.active && s_assembly.received_count >= s_assembly.total_chunks) {
-        // Reassemble in order: copy chunks sequentially into decode buffer
-        uint32_t offset = 0;
-        for (uint8_t i = 0; i < s_assembly.total_chunks && offset < IMG_MAX_JPEG_SIZE; i++) {
-            uint16_t sz = s_assembly.chunk_sizes[i];
-            uint16_t src_off = s_assembly.chunk_offsets[i];
-            if (sz > 0 && offset + sz <= IMG_MAX_JPEG_SIZE) {
-                memcpy(s_decode_buf + offset, s_assembly.jpeg_buf + src_off, sz);
-                offset += sz;
+        // Detect SOI marker: 0xFF 0xD8 → bắt đầu frame mới
+        if (s_assembly.prev_byte == 0xFF && b == 0xD8) {
+            // Reset buffer, ghi lại 0xFF 0xD8
+            s_assembly.total_size = 0;
+            if (s_assembly.total_size + 2 <= IMG_MAX_JPEG_SIZE) {
+                s_assembly.jpeg_buf[s_assembly.total_size++] = 0xFF;
+                s_assembly.jpeg_buf[s_assembly.total_size++] = 0xD8;
             }
-        }
-        s_decode_size = offset;
-        s_assembly.active = false;
-        s_frame_ready = true;
-
-        // Notify decode task
-        if (s_decode_task) {
-            xTaskNotifyGive(s_decode_task);
+            s_assembly.active = true;
+            s_assembly.prev_byte = b;
+            continue;
         }
 
-        ESP_LOGD(TAG, "Frame %u hoan chinh: %lu bytes tu %u chunks",
-                 s_assembly.frame_id, (unsigned long)offset, s_assembly.total_chunks);
+        if (!s_assembly.active) {
+            s_assembly.prev_byte = b;
+            continue;
+        }
+
+        // Ghi byte vào buffer
+        if (s_assembly.total_size < IMG_MAX_JPEG_SIZE) {
+            s_assembly.jpeg_buf[s_assembly.total_size++] = b;
+        } else {
+            // Buffer overflow → hủy frame
+            s_assembly.active = false;
+            s_assembly.prev_byte = b;
+            continue;
+        }
+
+        // Detect EOI marker: 0xFF 0xD9 → kết thúc frame
+        if (s_assembly.prev_byte == 0xFF && b == 0xD9) {
+            // Frame hoàn chỉnh → copy sang decode buffer
+            if (s_frame_ready == false && s_assembly.total_size > 100) {
+                memcpy(s_decode_buf, s_assembly.jpeg_buf, s_assembly.total_size);
+                s_decode_size = s_assembly.total_size;
+                s_frame_ready = true;
+                if (s_decode_task) {
+                    xTaskNotifyGive(s_decode_task);
+                }
+            }
+            s_assembly.active = false;
+        }
+
+        s_assembly.prev_byte = b;
     }
 
     xSemaphoreGive(s_assembly_mutex);

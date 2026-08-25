@@ -324,19 +324,31 @@ static int access_cb(uint16_t conn_handle, uint16_t attr_handle,
         }
 
         // Peek at first byte to determine if this is binary image data or
-        // JSON text (HLP protocol). Image frames always start with 0xFF
-        // (JPEG SOI marker or our frame protocol byte), while JSON/HLP text
-        // starts with '{' or other printable ASCII.
+        // JSON text (HLP protocol).
+        //
+        // Image frame: bắt đầu bằng 0xFF 0xD8 (JPEG SOI), các chunk tiếp theo
+        // KHÔNG bắt đầu bằng 0xFF nên cần state flag "đang nhận image" giữ
+        // routing cho tới khi gặp EOI (0xFF 0xD9).
+        // JSON/HLP text: bắt đầu bằng '{' hoặc printable ASCII.
+        static bool s_receiving_image = false;
+
         uint8_t first_byte = 0;
         os_mbuf_copydata(ctxt->om, 0, 1, &first_byte);
 
+        // Bắt đầu image mới khi thấy JSON control ('{' '[') → tắt image mode
+        if (first_byte == '{' || first_byte == '[') {
+            s_receiving_image = false;
+        }
+        // Bắt đầu image khi thấy JPEG SOI 0xFF (thường 0xFF 0xD8)
         if (first_byte == 0xFF && img_stream_is_ready()) {
+            s_receiving_image = true;
+        }
+
+        if (s_receiving_image && img_stream_is_ready()) {
             // Binary image chunk -> route to img_stream decoder
-            // Use a stack buffer for small chunks, or PSRAM for larger ones
             uint8_t stack_buf[512];
             uint8_t *buf = stack_buf;
             if (length > sizeof(stack_buf)) {
-                // Should not happen with normal BLE MTU, but handle gracefully
                 ESP_LOGW(TAG, "Image chunk qua lon (%u bytes), bo qua", (unsigned)length);
                 return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
             }
@@ -344,6 +356,15 @@ static int access_cb(uint16_t conn_handle, uint16_t attr_handle,
                 return BLE_ATT_ERR_UNLIKELY;
             }
             img_stream_feed_chunk(buf, (uint16_t)length);
+
+            // Detect EOI (0xFF 0xD9) ở cuối chunk → kết thúc image mode
+            if (length >= 2) {
+                uint8_t last2[2];
+                os_mbuf_copydata(ctxt->om, length - 2, 2, last2);
+                if (last2[0] == 0xFF && last2[1] == 0xD9) {
+                    s_receiving_image = false;
+                }
+            }
             return 0;
         }
 

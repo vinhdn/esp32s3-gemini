@@ -55,6 +55,8 @@ class MapStreamManager(
     @Volatile
     private var isStreaming = false
 
+    fun isStreamingActive(): Boolean = isStreaming
+
     @Volatile
     var fps: Int = DEFAULT_FPS
         set(value) {
@@ -192,14 +194,27 @@ class MapStreamManager(
         }
     }
 
+    private var frameCounter = 0
+    private var nullImageCounter = 0
+
     private fun captureAndSendFrame() {
         val reader = imageReader ?: return
         val image: Image? = reader.acquireLatestImage()
-        if (image == null) return
+        if (image == null) {
+            nullImageCounter++
+            if (nullImageCounter % 20 == 1) {
+                Log.w(TAG, "acquireLatestImage null (count=$nullImageCounter) - VirtualDisplay chưa có frame?")
+            }
+            return
+        }
 
         try {
             val jpegBytes = imageToJpeg(image)
             if (jpegBytes != null && jpegBytes.size > 100) {
+                frameCounter++
+                if (frameCounter % 5 == 1) {
+                    Log.i(TAG, "📷 Frame #$frameCounter: ${jpegBytes.size} bytes → BLE")
+                }
                 // Send on streaming thread to avoid blocking capture
                 streamingHandler?.post {
                     sendFrameOverBle(jpegBytes)
