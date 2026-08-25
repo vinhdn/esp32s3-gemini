@@ -68,7 +68,12 @@ class ObdManager(private val context: Context) {
      * Lấy danh sách thiết bị Bluetooth Classic đã pair (để chọn ELM327).
      */
     fun getPairedDevices(): List<BluetoothDevice> {
-        return bluetoothAdapter?.bondedDevices?.toList() ?: emptyList()
+        return try {
+            bluetoothAdapter?.bondedDevices?.toList() ?: emptyList()
+        } catch (e: SecurityException) {
+            Log.e(TAG, "Cannot get paired devices: ${e.message}")
+            emptyList()
+        }
     }
 
     /**
@@ -78,10 +83,14 @@ class ObdManager(private val context: Context) {
         scope.launch {
             try {
                 _connectionState.value = ObdConnectionState.CONNECTING
-                _connectedDeviceName.value = device.name ?: device.address
+                _connectedDeviceName.value = try { device.name ?: device.address } catch (_: SecurityException) { device.address }
 
                 socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
-                socket?.connect()
+
+                // Timeout socket.connect() to avoid indefinite blocking
+                withTimeout(15_000) {
+                    socket?.connect()
+                }
 
                 inputStream = socket?.inputStream
                 outputStream = socket?.outputStream
@@ -94,6 +103,14 @@ class ObdManager(private val context: Context) {
                     _connectionState.value = ObdConnectionState.ERROR
                     disconnect()
                 }
+            } catch (e: SecurityException) {
+                Log.e(TAG, "Connect permission denied: ${e.message}")
+                _connectionState.value = ObdConnectionState.ERROR
+                disconnect()
+            } catch (e: TimeoutCancellationException) {
+                Log.e(TAG, "Connect timeout (15s)")
+                _connectionState.value = ObdConnectionState.ERROR
+                disconnect()
             } catch (e: IOException) {
                 Log.e(TAG, "Connect failed: ${e.message}")
                 _connectionState.value = ObdConnectionState.ERROR

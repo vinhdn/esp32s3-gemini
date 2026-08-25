@@ -178,7 +178,11 @@ class CarNavApplication : Application() {
      */
     private fun startLogcatReader() {
         val intent = Intent(this, com.esp32nav.service.LogcatReaderService::class.java)
-        startService(intent)
+        try {
+            startService(intent)
+        } catch (e: IllegalStateException) {
+            android.util.Log.e("CarNavApp", "Cannot start LogcatReader: ${e.message}")
+        }
     }
 
     /**
@@ -258,7 +262,13 @@ class CarNavApplication : Application() {
 
     fun startForegroundService() {
         val intent = Intent(this, com.esp32nav.service.BleForegroundService::class.java)
-        startForegroundService(intent)
+        try {
+            startForegroundService(intent)
+        } catch (e: IllegalStateException) {
+            android.util.Log.e("CarNavApp", "Cannot start foreground service: ${e.message}")
+            // Fallback: try startService (will work if app is in foreground)
+            try { startService(intent) } catch (_: Exception) {}
+        }
     }
 
     fun stopForegroundService() {
@@ -275,7 +285,7 @@ class CarNavApplication : Application() {
         val intent = Intent(this, com.esp32nav.service.BleForegroundService::class.java).apply {
             putExtra("status", status)
         }
-        startService(intent)
+        try { startService(intent) } catch (_: IllegalStateException) {}
     }
 }
 

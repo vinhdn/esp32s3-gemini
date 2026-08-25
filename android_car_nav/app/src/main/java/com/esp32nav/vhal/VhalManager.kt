@@ -1,6 +1,7 @@
 package com.esp32nav.vhal
 
 import android.content.Context
+import android.os.Handler
 import android.util.Log
 import com.esp32nav.model.VehicleData
 import kotlinx.coroutines.*
@@ -65,8 +66,20 @@ class VhalManager(private val context: Context) {
             try {
                 // Thử load android.car.Car class bằng reflection
                 val carClass = Class.forName("android.car.Car")
-                val createCarMethod = carClass.getMethod("createCar", Context::class.java)
-                carObject = createCarMethod.invoke(null, context)
+
+                // API 30+ có createCar(Context) one-arg.
+                // API 28-29 chỉ có createCar(Context, ServiceConnection, Handler) hoặc
+                // createCar(Context, ServiceConnection).
+                // Thử one-arg trước, fallback sang two-arg.
+                carObject = try {
+                    val createCarMethod = carClass.getMethod("createCar", Context::class.java)
+                    createCarMethod.invoke(null, context)
+                } catch (e: NoSuchMethodException) {
+                    // API 28/29: dùng createCar(Context, ServiceConnection) sync variant
+                    // hoặc createCar(Context, Handler) tuỳ OEM implementation
+                    Log.d(TAG, "createCar(Context) not available, trying API 28 variants...")
+                    tryCreateCarApi28(carClass)
+                }
 
                 if (carObject == null) {
                     _connectionState.value = VhalConnectionState.UNAVAILABLE
@@ -97,6 +110,60 @@ class VhalManager(private val context: Context) {
                 Log.e(TAG, "Failed to connect to Car Service: ${e.message}")
                 _connectionState.value = VhalConnectionState.UNAVAILABLE
             }
+        }
+    }
+
+    /**
+     * API 28/29 fallback: Car.createCar(Context, ServiceConnection) or
+     * Car.createCar(Context, ServiceConnection, Handler).
+     *
+     * On API 28, we use a blocking connect approach:
+     * call createCar then car.connect() synchronously.
+     */
+    private fun tryCreateCarApi28(carClass: Class<*>): Any? {
+        return try {
+            // Some API 28 automotive implementations have:
+            // Car.createCar(Context, ServiceConnection) where ServiceConnection can be null for sync
+            val method = carClass.getMethod(
+                "createCar",
+                Context::class.java,
+                android.content.ServiceConnection::class.java
+            )
+            val car = method.invoke(null, context, null)
+            // Call car.connect() if available (API 28 pattern)
+            if (car != null) {
+                try {
+                    val connectMethod = car.javaClass.getMethod("connect")
+                    connectMethod.invoke(car)
+                } catch (_: NoSuchMethodException) {
+                    // Already connected on creation
+                }
+            }
+            car
+        } catch (e: NoSuchMethodException) {
+            // Try another variant: createCar(Context, ServiceConnection, Handler)
+            try {
+                val method = carClass.getMethod(
+                    "createCar",
+                    Context::class.java,
+                    android.content.ServiceConnection::class.java,
+                    android.os.Handler::class.java
+                )
+                val car = method.invoke(null, context, null, null)
+                if (car != null) {
+                    try {
+                        val connectMethod = car.javaClass.getMethod("connect")
+                        connectMethod.invoke(car)
+                    } catch (_: NoSuchMethodException) {}
+                }
+                car
+            } catch (e2: Exception) {
+                Log.w(TAG, "No compatible createCar method found: ${e2.message}")
+                null
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "createCar API 28 fallback failed: ${e.message}")
+            null
         }
     }
 

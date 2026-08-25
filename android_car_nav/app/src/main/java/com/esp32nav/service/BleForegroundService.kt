@@ -68,7 +68,7 @@ class BleForegroundService : Service() {
 
     private fun updateNotification(status: String) {
         val notification = buildNotification(status)
-        val nm = getSystemService(NotificationManager::class.java)
+        val nm = getSystemService(NotificationManager::class.java) ?: return
         nm.notify(NOTIFICATION_ID, notification)
     }
 
@@ -113,7 +113,7 @@ class BleForegroundService : Service() {
             description = "Keeps BLE connection to HUD alive"
             setShowBadge(false)
         }
-        val nm = getSystemService(NotificationManager::class.java)
+        val nm = getSystemService(NotificationManager::class.java) ?: return
         nm.createNotificationChannel(channel)
     }
 

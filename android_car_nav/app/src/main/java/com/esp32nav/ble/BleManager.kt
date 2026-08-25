@@ -35,7 +35,7 @@ class BleManager(private val context: Context) {
     private var txCharacteristic: BluetoothGattCharacteristic? = null
     private var rxCharacteristic: BluetoothGattCharacteristic? = null
     private var currentMtu = 23
-    private var isWriting = false
+    @Volatile private var isWriting = false
     private val writeQueue = ConcurrentLinkedQueue<ByteArray>()
 
     private val _bleState = MutableStateFlow(BleState())
@@ -81,7 +81,17 @@ class BleManager(private val context: Context) {
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
 
-        s.startScan(filters, settings, scanCallback)
+        try {
+            s.startScan(filters, settings, scanCallback)
+        } catch (e: Exception) {
+            Log.e(TAG, "startScan failed: ${e.message}")
+            _bleState.value = _bleState.value.copy(
+                connectionState = BleConnectionState.DISCONNECTED,
+                lastError = "Scan failed: ${e.message}"
+            )
+            scheduleReconnect()
+            return
+        }
 
         scope.launch {
             delay(15000)
@@ -97,7 +107,7 @@ class BleManager(private val context: Context) {
     }
 
     fun stopScan() {
-        scanner?.stopScan(scanCallback)
+        try { scanner?.stopScan(scanCallback) } catch (_: Exception) {}
     }
 
     fun disconnect() {
@@ -216,7 +226,7 @@ class BleManager(private val context: Context) {
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     Log.d(TAG, "Disconnected")
-                    this@BleManager.gatt?.close()
+                    try { this@BleManager.gatt?.close() } catch (_: Exception) {}
                     this@BleManager.gatt = null
                     txCharacteristic = null
                     rxCharacteristic = null
@@ -349,8 +359,8 @@ class BleManager(private val context: Context) {
     fun destroy() {
         reconnectJob?.cancel()
         scope.cancel()
-        stopScan()
-        gatt?.close()
+        try { stopScan() } catch (_: Exception) {}
+        try { gatt?.close() } catch (_: Exception) {}
         gatt = null
     }
 }

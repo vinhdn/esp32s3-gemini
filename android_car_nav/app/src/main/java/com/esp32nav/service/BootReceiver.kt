@@ -28,7 +28,11 @@ class BootReceiver : BroadcastReceiver() {
             val app = context.applicationContext as? CarNavApplication ?: return
 
             // Khởi động foreground service để giữ BLE alive
-            app.startForegroundService()
+            try {
+                app.startForegroundService()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start foreground service from boot: ${e.message}")
+            }
 
             // Bắt đầu scan BLE tìm ESP32 board
             app.bleManager.setAutoReconnect(true)

@@ -57,33 +57,38 @@ class LogcatReaderService : Service() {
 
     private fun startLogcatReader() {
         scope.launch {
-            try {
-                // Read logcat filtering only InstrumentActivity tag
-                // -T 1: start from now (don't replay old logs)
-                // -s InstrumentActivity:D : only this tag at Debug level
-                val cmd = arrayOf("logcat", "-T", "1", "-s", "InstrumentActivity:D")
-                val process = Runtime.getRuntime().exec(cmd)
-                logcatProcess = process
+            while (isActive) {
+                try {
+                    // Read logcat filtering only InstrumentActivity tag
+                    // -T 1: start from now (don't replay old logs)
+                    // -s InstrumentActivity:D : only this tag at Debug level
+                    val cmd = arrayOf("logcat", "-T", "1", "-s", "InstrumentActivity:D")
+                    val process = Runtime.getRuntime().exec(cmd)
+                    logcatProcess = process
 
-                val reader = BufferedReader(InputStreamReader(process.inputStream))
-                Log.i(TAG, "Logcat reader started, monitoring InstrumentActivity...")
+                    val reader = BufferedReader(InputStreamReader(process.inputStream))
+                    Log.i(TAG, "Logcat reader started, monitoring InstrumentActivity...")
 
-                var line: String?
-                while (isActive) {
-                    line = reader.readLine()
-                    if (line == null) {
-                        // Process ended, restart after delay
-                        delay(2000)
-                        if (isActive) startLogcatReader()
-                        return@launch
+                    var line: String?
+                    while (isActive) {
+                        line = reader.readLine()
+                        if (line == null) {
+                            // Process ended, break to restart
+                            break
+                        }
+                        parseLine(line)
                     }
-                    parseLine(line)
+
+                    // Process ended or coroutine cancelled, cleanup
+                    try { process.destroy() } catch (_: Exception) {}
+
+                } catch (e: Exception) {
+                    Log.e(TAG, "Logcat reader error: ${e.message}")
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Logcat reader error: ${e.message}")
+
+                // Wait before retrying (avoids tight loop on persistent failures)
                 if (isActive) {
                     delay(5000)
-                    startLogcatReader()
                 }
             }
         }
