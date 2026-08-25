@@ -11,6 +11,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "img_stream.h"
 #include "host/ble_att.h"
 #include "host/ble_hs.h"
 #include "host/ble_uuid.h"
@@ -318,6 +319,35 @@ static int access_cb(uint16_t conn_handle, uint16_t attr_handle,
 
     if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
         size_t length = OS_MBUF_PKTLEN(ctxt->om);
+        if (length < 1) {
+            return 0;
+        }
+
+        // Peek at first byte to determine if this is binary image data or
+        // JSON text (HLP protocol). Image frames always start with 0xFF
+        // (JPEG SOI marker or our frame protocol byte), while JSON/HLP text
+        // starts with '{' or other printable ASCII.
+        uint8_t first_byte = 0;
+        os_mbuf_copydata(ctxt->om, 0, 1, &first_byte);
+
+        if (first_byte == 0xFF && img_stream_is_ready()) {
+            // Binary image chunk -> route to img_stream decoder
+            // Use a stack buffer for small chunks, or PSRAM for larger ones
+            uint8_t stack_buf[512];
+            uint8_t *buf = stack_buf;
+            if (length > sizeof(stack_buf)) {
+                // Should not happen with normal BLE MTU, but handle gracefully
+                ESP_LOGW(TAG, "Image chunk qua lon (%u bytes), bo qua", (unsigned)length);
+                return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+            }
+            if (os_mbuf_copydata(ctxt->om, 0, length, buf) != 0) {
+                return BLE_ATT_ERR_UNLIKELY;
+            }
+            img_stream_feed_chunk(buf, (uint16_t)length);
+            return 0;
+        }
+
+        // JSON text / HLP protocol -> queue for protocol_task
         if (length > HLP_MAX_FRAME) {
             return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
         }

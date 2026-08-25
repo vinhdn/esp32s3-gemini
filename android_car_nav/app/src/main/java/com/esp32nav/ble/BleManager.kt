@@ -25,6 +25,7 @@ class BleManager(private val context: Context) {
         private val TX_CHAR_UUID = UUID.fromString("8a7e0002-4d6e-4c48-9a9d-484c504c0001")
         private val RX_CHAR_UUID = UUID.fromString("8a7e0003-4d6e-4c48-9a9d-484c504c0001")
         private val CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+        private const val IMAGE_INTER_CHUNK_DELAY_MS = 6L  // delay between BLE image chunk writes
     }
 
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
@@ -355,6 +356,57 @@ class BleManager(private val context: Context) {
             }
         }
     }
+
+    // ─── Image streaming (WRITE_TYPE_NO_RESPONSE for speed) ────────────────
+
+    /**
+     * Write a single image chunk WITHOUT response (fast, unreliable).
+     * Used for JPEG frame streaming to ESP32.
+     */
+    fun writeImageChunk(data: ByteArray) {
+        val tx = txCharacteristic ?: return
+        val g = gatt ?: return
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            g.writeCharacteristic(tx, data, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
+        } else {
+            @Suppress("DEPRECATION")
+            tx.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+            @Suppress("DEPRECATION")
+            tx.value = data
+            @Suppress("DEPRECATION")
+            g.writeCharacteristic(tx)
+        }
+    }
+
+    /**
+     * Send a complete JPEG frame over BLE by chunking it into (MTU - 3) byte writes.
+     * Uses WRITE_TYPE_NO_RESPONSE for maximum throughput.
+     * ESP32 detects frame boundaries via JPEG SOI (0xFF 0xD8) and EOI (0xFF 0xD9) markers.
+     *
+     * Call from a background thread — this method blocks with inter-chunk delays.
+     */
+    fun sendJpegFrame(jpegBytes: ByteArray) {
+        if (_bleState.value.connectionState != BleConnectionState.CONNECTED) return
+        val chunkSize = (currentMtu - 3).coerceAtLeast(20)  // typically 244 bytes
+
+        var offset = 0
+        while (offset < jpegBytes.size) {
+            val end = (offset + chunkSize).coerceAtMost(jpegBytes.size)
+            val chunk = jpegBytes.copyOfRange(offset, end)
+            writeImageChunk(chunk)
+            offset = end
+
+            // Small delay between chunks to avoid BLE congestion
+            if (offset < jpegBytes.size) {
+                try {
+                    Thread.sleep(IMAGE_INTER_CHUNK_DELAY_MS)
+                } catch (_: InterruptedException) {}
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
 
     fun destroy() {
         reconnectJob?.cancel()

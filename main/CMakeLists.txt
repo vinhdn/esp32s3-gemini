@@ -8,6 +8,7 @@ idf_component_register(
         "display/lcd_display.c"
         "display/ui_screens.c"
         "display/nav_icons.c"
+        "display/img_stream.c"
         "display/fonts/font_vi_14.c"
         "display/fonts/font_vi_20.c"
         "display/fonts/font_speed_64.c"
@@ -34,4 +35,5 @@ idf_component_register(
         esp_lvgl_port
         lvgl
         bt
+        esp_rom
 )

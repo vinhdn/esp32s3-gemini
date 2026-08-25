@@ -7,6 +7,7 @@ import com.esp32nav.model.NavigationData
 import com.esp32nav.model.VehicleData
 import com.esp32nav.obd.ObdManager
 import com.esp32nav.parser.DatMapParser
+import com.esp32nav.stream.MapStreamManager
 import com.esp32nav.vhal.VhalManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -21,6 +22,9 @@ class CarNavApplication : Application() {
         private set
 
     lateinit var vhalManager: VhalManager
+        private set
+
+    lateinit var mapStreamManager: MapStreamManager
         private set
 
     private val _currentNavData = MutableStateFlow<NavigationData?>(null)
@@ -44,6 +48,7 @@ class CarNavApplication : Application() {
         bleManager = BleManager(this)
         obdManager = ObdManager(this)
         vhalManager = VhalManager(this)
+        mapStreamManager = MapStreamManager(this, bleManager)
 
         // Tự động bắt đầu scan BLE ngay khi app khởi tạo
         bleManager.setAutoReconnect(true)
@@ -259,6 +264,27 @@ class CarNavApplication : Application() {
             _messageLog.value = current
         }
     }
+
+    // ─── Map stream control ─────────────────────────────────────────────────
+
+    /**
+     * Start streaming the screen capture to ESP32 over BLE.
+     * Must call mapStreamManager.onPermissionResult() first from the Activity.
+     */
+    fun startMapStream() {
+        mapStreamManager.startStreaming()
+        addLogEntry("SYS", "Map streaming started (${mapStreamManager.fps} FPS)")
+    }
+
+    /**
+     * Stop map streaming.
+     */
+    fun stopMapStream() {
+        mapStreamManager.stopStreaming()
+        addLogEntry("SYS", "Map streaming stopped")
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
 
     fun startForegroundService() {
         val intent = Intent(this, com.esp32nav.service.BleForegroundService::class.java)

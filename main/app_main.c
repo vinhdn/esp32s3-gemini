@@ -14,6 +14,7 @@
 
 #include "lcd_display.h"
 #include "ui_screens.h"
+#include "img_stream.h"
 #include "codec_board.h"
 #include "audio_pipeline.h"
 #include "buttons.h"
@@ -165,7 +166,9 @@ void app_main(void)
     ESP_ERROR_CHECK(status_led_init());
     ESP_ERROR_CHECK(lcd_display_init());
     ui_init(lcd_display_get_lvgl_disp());
-    log_heap_checkpoint("lcd_display+ui_init");
+    // Image stream: JPEG decoder + canvas (ẩn mặc định, hiện khi nhận frame)
+    img_stream_init(lv_display_get_screen_active(lcd_display_get_lvgl_disp()));
+    log_heap_checkpoint("lcd_display+ui_init+img_stream");
 
     ESP_ERROR_CHECK(codec_board_init());
     log_heap_checkpoint("codec_board_init");
