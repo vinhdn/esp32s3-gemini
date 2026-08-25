@@ -37,12 +37,25 @@ class MapStreamManager(
         private const val TAG = "MapStreamManager"
         const val REQUEST_CODE_SCREEN_CAPTURE = 9001
 
+        // Output gửi tới ESP32 luôn là 240x240
         private const val CAPTURE_WIDTH = 240
         private const val CAPTURE_HEIGHT = 240
         private const val JPEG_QUALITY = 25
         private const val DEFAULT_FPS = 4
-        private const val INTER_FRAME_DELAY_MS = 50L  // delay after last chunk for ESP32 to decode
+        private const val INTER_FRAME_DELAY_MS = 50L
+
+        // Chế độ đơn giản hóa: lọc màu giữ đường, bỏ text/nền
+        // true = chỉ hiện lines tuyến đường (nền đen, đường sáng)
+        // false = ảnh map gốc
+        const val SIMPLIFY_MODE_DEFAULT = true
     }
+
+    // Full screen capture dimensions (set khi start)
+    private var captureFullWidth = 0
+    private var captureFullHeight = 0
+
+    @Volatile
+    var simplifyMode: Boolean = SIMPLIFY_MODE_DEFAULT
 
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
@@ -104,12 +117,15 @@ class MapStreamManager(
 
         isStreaming = true
 
-        // Get screen density
+        // Get screen density + full resolution
         val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION")
-        wm.defaultDisplay.getMetrics(metrics)
+        wm.defaultDisplay.getRealMetrics(metrics)
         screenDensity = metrics.densityDpi
+        captureFullWidth = metrics.widthPixels
+        captureFullHeight = metrics.heightPixels
+        Log.i(TAG, "Screen: ${captureFullWidth}x${captureFullHeight} density=$screenDensity, simplify=$simplifyMode")
 
         // Create capture thread
         captureThread = HandlerThread("MapCapture").also { it.start() }
@@ -119,16 +135,16 @@ class MapStreamManager(
         streamingThread = HandlerThread("MapStream").also { it.start() }
         streamingHandler = Handler(streamingThread!!.looper)
 
-        // ImageReader at 240x240
+        // ImageReader ở full screen resolution để crop được vùng map
         imageReader = ImageReader.newInstance(
-            CAPTURE_WIDTH, CAPTURE_HEIGHT,
+            captureFullWidth, captureFullHeight,
             PixelFormat.RGBA_8888, 2
         )
 
-        // Create VirtualDisplay
+        // Create VirtualDisplay (mirror full screen)
         virtualDisplay = projection.createVirtualDisplay(
             "MapStream",
-            CAPTURE_WIDTH, CAPTURE_HEIGHT, screenDensity,
+            captureFullWidth, captureFullHeight, screenDensity,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
             imageReader!!.surface,
             null, captureHandler
@@ -232,27 +248,89 @@ class MapStreamManager(
         val rowStride = plane.rowStride
         val rowPadding = rowStride - pixelStride * image.width
 
-        // Create bitmap from Image
-        val bitmapWidth = image.width + rowPadding / pixelStride
-        val bitmap = Bitmap.createBitmap(bitmapWidth, image.height, Bitmap.Config.ARGB_8888)
-        bitmap.copyPixelsFromBuffer(buffer)
+        // Create full-screen bitmap from Image
+        val fullWidth = image.width + rowPadding / pixelStride
+        val fullBitmap = Bitmap.createBitmap(fullWidth, image.height, Bitmap.Config.ARGB_8888)
+        fullBitmap.copyPixelsFromBuffer(buffer)
 
-        // Crop to exact 240x240 (remove padding)
-        val cropped = if (bitmapWidth != CAPTURE_WIDTH || bitmap.height != CAPTURE_HEIGHT) {
-            Bitmap.createBitmap(bitmap, 0, 0, CAPTURE_WIDTH.coerceAtMost(bitmap.width), CAPTURE_HEIGHT.coerceAtMost(bitmap.height))
-        } else {
-            bitmap
+        // Crop vùng map: bỏ status bar trên (~10%) và bottom nav/instruction (~25%)
+        // Google Maps: map ở giữa, instruction card ở dưới, search bar trên.
+        // Lấy vùng trung tâm hình vuông (vùng map thuần).
+        val srcW = image.width
+        val srcH = image.height
+        val cropTop = (srcH * 0.12f).toInt()      // bỏ 12% trên (search/status)
+        val cropBottom = (srcH * 0.28f).toInt()   // bỏ 28% dưới (instruction card)
+        val cropH = srcH - cropTop - cropBottom
+        val cropSize = minOf(srcW, cropH)         // hình vuông
+        val cropX = (srcW - cropSize) / 2
+        val cropY = cropTop + (cropH - cropSize) / 2
+
+        val mapRegion = try {
+            Bitmap.createBitmap(
+                fullBitmap,
+                cropX.coerceAtLeast(0),
+                cropY.coerceAtLeast(0),
+                cropSize.coerceAtMost(fullWidth - cropX),
+                cropSize.coerceAtMost(srcH - cropY)
+            )
+        } catch (e: Exception) {
+            fullBitmap
         }
+
+        // Scale xuống 240x240
+        val scaled = Bitmap.createScaledBitmap(mapRegion, CAPTURE_WIDTH, CAPTURE_HEIGHT, true)
+
+        // Apply simplify filter nếu bật
+        val finalBitmap = if (simplifyMode) simplifyMapColors(scaled) else scaled
 
         // Compress to JPEG
         val outputStream = ByteArrayOutputStream(8192)
-        cropped.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, outputStream)
+        finalBitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, outputStream)
 
         // Clean up
-        if (cropped !== bitmap) cropped.recycle()
-        bitmap.recycle()
+        if (mapRegion !== fullBitmap) mapRegion.recycle()
+        if (scaled !== finalBitmap) scaled.recycle()
+        if (finalBitmap !== scaled) finalBitmap.recycle()
+        fullBitmap.recycle()
 
         return outputStream.toByteArray()
+    }
+
+    /**
+     * Đơn giản hóa màu bản đồ: giữ đường (xanh navigation, xám/trắng đường),
+     * làm nền đen, bỏ text/label để rõ tuyến đường + nén JPEG tốt hơn.
+     */
+    private fun simplifyMapColors(src: Bitmap): Bitmap {
+        val w = src.width
+        val h = src.height
+        val pixels = IntArray(w * h)
+        src.getPixels(pixels, 0, w, 0, 0, w, h)
+
+        for (i in pixels.indices) {
+            val p = pixels[i]
+            val r = (p shr 16) and 0xFF
+            val g = (p shr 8) and 0xFF
+            val b = p and 0xFF
+
+            val isNavBlue = (b > 150 && b > r + 30 && b > g + 10)        // tuyến đường xanh
+            val isWhiteRoad = (r > 200 && g > 200 && b > 200)            // đường trắng
+            val isGrayRoad = (kotlin.math.abs(r - g) < 25 &&
+                              kotlin.math.abs(g - b) < 25 &&
+                              r in 150..230)                              // đường xám
+            val isYellowRoad = (r > 200 && g > 180 && b < 140)          // đường vàng (cao tốc)
+
+            pixels[i] = when {
+                isNavBlue -> 0xFF33BBFF.toInt()      // xanh sáng cho tuyến navigation
+                isYellowRoad -> 0xFFFFCC33.toInt()   // vàng cho cao tốc
+                isWhiteRoad -> 0xFFFFFFFF.toInt()    // trắng cho đường chính
+                isGrayRoad -> 0xFF888888.toInt()     // xám cho đường phụ
+                else -> 0xFF101510.toInt()           // nền tối (hơi xanh đen)
+            }
+        }
+
+        val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        result.setPixels(pixels, 0, w, 0, 0, w, h)
+        return result
     }
 
     private fun sendFrameOverBle(jpegBytes: ByteArray) {
