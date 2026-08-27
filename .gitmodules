@@ -1,0 +1,4 @@
+[submodule "esp32"]
+	path = esp32
+	url = git@vinhdn.github.com:vinhdn/esp32s3-gemini.git
+	branch = feature/car-hud-only

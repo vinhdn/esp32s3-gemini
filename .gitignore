@@ -1,0 +1,28 @@
+# Original and rebuilt Android packages
+*.apk
+*.apk.idsig
+*.apks
+*.aab
+
+# Signing material and local secrets
+*.jks
+*.keystore
+secrect.bin
+.env
+.env.*
+
+# Apktool output is generated. The one tracked VmslRelay template under
+# analysis/apktool-3.3.4 is added explicitly with git add -f.
+analysis/apktool*/
+
+# Captures and generated analysis output
+analysis/*.jsonl
+analysis/*.log
+analysis/__pycache__/
+*.py[cod]
+
+# Build/editor/OS output
+**/build/
+**/.cache/
+.DS_Store
+**/.DS_Store

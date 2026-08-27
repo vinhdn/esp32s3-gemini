@@ -1,0 +1,75 @@
+--- a/smali_classes2/Ma/j.smali
++++ b/smali_classes2/Ma/j.smali
+@@ -549,6 +549,8 @@
+     if-eqz v1, :cond_1
+ 
+     invoke-virtual {v1, p1}, Landroid/bluetooth/BluetoothGattCharacteristic;->setValue([B)Z
++
++    invoke-static {v0, v1}, Lvn/vietmap/live/patch/VmslRelay;->registerGatt(Landroid/bluetooth/BluetoothGatt;Landroid/bluetooth/BluetoothGattCharacteristic;)V
+ 
+     invoke-virtual {v0, v1}, Landroid/bluetooth/BluetoothGatt;->writeCharacteristic(Landroid/bluetooth/BluetoothGattCharacteristic;)Z
+     :try_end_0
+@@ -823,6 +825,15 @@
+ .method public final u()V
+     .locals 2
+ 
++    invoke-static {}, Lvn/vietmap/live/patch/VmslRelay;->shouldKeepConnection()Z
++
++    move-result v0
++
++    if-eqz v0, :vmsl_allow_disconnect
++
++    return-void
++
++    :vmsl_allow_disconnect
+     sget-object v0, LMa/n;->f:LMa/n;
+ 
+     const/4 v1, 0x0
+--- a/smali_classes2/Ma/j$a.smali
++++ b/smali_classes2/Ma/j$a.smali
+@@ -165,6 +165,15 @@
+ 
+     invoke-super {p0, p1, p2, p3}, Landroid/bluetooth/BluetoothGattCallback;->onCharacteristicWrite(Landroid/bluetooth/BluetoothGatt;Landroid/bluetooth/BluetoothGattCharacteristic;I)V
+ 
++    invoke-static {p1, p2, p3}, Lvn/vietmap/live/patch/VmslRelay;->onCharacteristicWrite(Landroid/bluetooth/BluetoothGatt;Landroid/bluetooth/BluetoothGattCharacteristic;I)Z
++
++    move-result v0
++
++    if-eqz v0, :vmsl_original_callback
++
++    return-void
++
++    :vmsl_original_callback
+     iget-object p2, p0, LMa/j$a;->a:LMa/j;
+ 
+     new-instance v0, Ljava/lang/StringBuilder;
+--- a/smali_classes2/pa.1/f.smali
++++ b/smali_classes2/pa.1/f.smali
+@@ -1823,6 +1823,8 @@
+     invoke-static {v1, v2}, LJ5/b;->e(Lorg/json/JSONObject;Ljava/lang/String;)Ljava/lang/Integer;
+ 
+     move-result-object v12
++
++    invoke-static {v1}, Lvn/vietmap/live/patch/VmslRelay;->updateFromJson(Lorg/json/JSONObject;)V
+ 
+     const-string v2, "splashScreenStatus"
+ 
+--- a/smali_classes2/vn/vietmap/live/MainActivity.smali
++++ b/smali_classes2/vn/vietmap/live/MainActivity.smali
+@@ -1064,6 +1064,8 @@
+     iget-object v0, v0, Lio/flutter/plugin/common/i;->b:Ljava/lang/Object;
+ 
+     check-cast v0, Ljava/lang/Integer;
++
++    invoke-static {v0}, Lvn/vietmap/live/patch/VmslRelay;->updatePhoneCurrentSpeed(Ljava/lang/Integer;)V
+ 
+     if-eqz v0, :cond_4b
+ 
+@@ -1106,6 +1108,8 @@
+     iget-object v0, v0, Lio/flutter/plugin/common/i;->b:Ljava/lang/Object;
+ 
+     check-cast v0, Ljava/lang/Integer;
++
++    invoke-static {v0}, Lvn/vietmap/live/patch/VmslRelay;->updatePhoneSpeedLimit(Ljava/lang/Integer;)V
+ 
+     if-eqz v0, :cond_4b
