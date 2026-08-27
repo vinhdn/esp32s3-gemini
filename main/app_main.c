@@ -111,6 +111,11 @@ static void on_nav_data(const nav_data_t *nav, void *ctx)
     if (!nav) return;
     ui_nav_update(nav->direction, nav->distance, nav->road, nav->instruction);
 
+    // navigationState tu VietMap (VMSX) - hien o dong duoi cung.
+    if (nav->nav_state >= 0) {
+        ui_set_nav_state(nav->nav_state);
+    }
+
     // Cập nhật time remaining / ETA nếu có (hiện trên status bar và bottom)
     if (nav->time_remaining[0] || nav->total_dist[0] || nav->eta[0]) {
         // Sẽ gọi thêm hàm UI riêng - tạm hiển thị qua label có sẵn

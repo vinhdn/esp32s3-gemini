@@ -10,11 +10,13 @@ extern "C" {
 #endif
 
 // GATT server (NimBLE) cho Car HUD, giao thuc HLP/1.
-// UUID (theo Document 9):
-//   Service:      8a7e0001-4d6e-4c48-9a9d-484c504c0001
-//   TX (write):   8a7e0002-4d6e-4c48-9a9d-484c504c0001
-//   RX (notify):  8a7e0003-4d6e-4c48-9a9d-484c504c0001
-//   Capabilities: 8a7e0004-4d6e-4c48-9a9d-484c504c0001
+// Ten BLE: VIETMAP_HUD_H50
+// UUID Vietmap H50 (Bluetooth base UUID):
+//   Service:      0000FFFF-0000-1000-8000-00805F9B34FB
+//   TX (read + write with/without response):
+//                 00009ABC-0000-1000-8000-00805F9B34FB
+//   RX (notify):  00001234-0000-1000-8000-00805F9B34FB
+//   Capabilities: 00009ABE-0000-1000-8000-00805F9B34FB
 
 // Callback nhan toc do + gioi han (tu Waze/navigation app).
 typedef void (*waze_hud_data_cb_t)(uint16_t speed_kmh, uint16_t limit_kmh, void *ctx);
@@ -28,6 +30,7 @@ typedef struct {
     char instruction[128]; // Chi dan day du, vd "1.7 kilometers, Keep left"
     char time_remaining[16]; // "36 min" - thoi gian con lai
     char total_dist[16];   // "12 km" - khoang cach tong con lai
+    int16_t nav_state;     // navigationState tu VietMap (VMSX), -1 = khong co
 } nav_data_t;
 
 typedef void (*waze_hud_nav_cb_t)(const nav_data_t *nav, void *ctx);

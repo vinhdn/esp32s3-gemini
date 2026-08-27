@@ -1,9 +1,10 @@
 // GATT server (NimBLE) cho Waze HUD Link (giao thuc HLP/1), dua theo
-// docs/waze-hud-link-sdk-ai-bundle.md (Document 2/4/9 - code mau ESP32 BLE
-// va UUID transport chinh thuc cua Android HUD Link).
+// docs/waze-hud-link-sdk-ai-bundle.md (Document 2/4/9 - code mau ESP32 BLE).
+// Ten va UUID GATT dung bo nhan dien Vietmap HUD H50 de app ket noi dung board.
 
 #include "waze_hud_ble.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "cJSON.h"
@@ -22,24 +23,16 @@
 
 static const char *TAG = "waze_hud_ble";
 
-#define DEVICE_NAME "VIETMAP_HUD_H1X"
+#define DEVICE_NAME "VIETMAP_HUD_H50"
 #define HLP_MAX_FRAME 512
 
-// UUID theo dung bang "UUID cua transport" trong Document 9. Byte truyen
-// vao BLE_UUID128_INIT theo thu tu little-endian (dao nguoc so voi chuoi
-// UUID chuan hien thi vi 8a7e0001-4d6e-4c48-9a9d-484c504c0001).
-static const ble_uuid128_t s_svc_uuid = BLE_UUID128_INIT(
-    0x01, 0x00, 0x4c, 0x50, 0x4c, 0x48, 0x9d, 0x9a,
-    0x48, 0x4c, 0x6e, 0x4d, 0x01, 0x00, 0x7e, 0x8a);
-static const ble_uuid128_t s_tx_uuid = BLE_UUID128_INIT(
-    0x01, 0x00, 0x4c, 0x50, 0x4c, 0x48, 0x9d, 0x9a,
-    0x48, 0x4c, 0x6e, 0x4d, 0x02, 0x00, 0x7e, 0x8a);
-static const ble_uuid128_t s_rx_uuid = BLE_UUID128_INIT(
-    0x01, 0x00, 0x4c, 0x50, 0x4c, 0x48, 0x9d, 0x9a,
-    0x48, 0x4c, 0x6e, 0x4d, 0x03, 0x00, 0x7e, 0x8a);
-static const ble_uuid128_t s_caps_uuid = BLE_UUID128_INIT(
-    0x01, 0x00, 0x4c, 0x50, 0x4c, 0x48, 0x9d, 0x9a,
-    0x48, 0x4c, 0x6e, 0x4d, 0x04, 0x00, 0x7e, 0x8a);
+// UUID Vietmap HUD H50 tren Bluetooth base UUID
+// xxxxxxxx-0000-1000-8000-00805F9B34FB. Giu kien truc HLP hien tai voi
+// characteristic TX/RX tach biet va them Caps lien ke.
+static const ble_uuid16_t s_svc_uuid  = BLE_UUID16_INIT(0xFFFF);
+static const ble_uuid16_t s_tx_uuid   = BLE_UUID16_INIT(0x9ABC);
+static const ble_uuid16_t s_rx_uuid   = BLE_UUID16_INIT(0x1234);
+static const ble_uuid16_t s_caps_uuid = BLE_UUID16_INIT(0x9ABE);
 
 typedef struct {
     uint16_t length;
@@ -59,10 +52,16 @@ static waze_hud_vehicle_cb_t s_vehicle_cb;
 static void *s_vehicle_cb_ctx;
 
 static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+static uint16_t s_tx_handle;
 static uint16_t s_rx_handle;
 static bool s_notify_enabled;
 static volatile bool s_send_dev_pending;
 static uint8_t s_own_addr_type;
+
+// Gia tri binary H50 gan nhat: tra ve khi mobile READ 0x9ABC va dung lam
+// response notify tren 0x1234 cho write-with-response.
+static uint8_t s_last_h50_value[HLP_MAX_FRAME];
+static size_t s_last_h50_length;
 
 // Bo dem ghep frame HLP tu cac chunk WRITE cua Android (khong phu thuoc
 // ranh gioi packet ATT - 1 dong JSON co the den qua nhieu chunk hoac nhieu
@@ -89,6 +88,27 @@ static const char *hci_disconnect_reason_str(int reason)
     case 0x3e: return "Connection Failed - MIC Failure/Sync Timeout";
     default: return "(xem bang HCI Error Codes trong Bluetooth Core Spec)";
     }
+}
+
+// Gui byte thô qua characteristic RX/notify 0x1234 cua Vietmap H50.
+static int notify_bytes(const void *data, size_t length)
+{
+    if (!s_notify_enabled || s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+        return BLE_HS_ENOTCONN;
+    }
+    int rc = BLE_HS_ENOMEM;
+    for (int attempt = 0; attempt < 3 && rc == BLE_HS_ENOMEM; ++attempt) {
+        struct os_mbuf *om = ble_hs_mbuf_from_flat(data, length);
+        if (!om) {
+            rc = BLE_HS_ENOMEM;
+        } else {
+            rc = ble_gatts_notify_custom(s_conn_handle, s_rx_handle, om);
+        }
+        if (rc == BLE_HS_ENOMEM) {
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+    }
+    return rc;
 }
 
 // Gui 1 dong HLP (JSON + '\n') qua notify RX, chia nho theo MTU - 3 neu can
@@ -181,12 +201,14 @@ static void handle_line(const char *line, size_t length)
             ui_set_location(road_name);
         }
     } else if (strcmp(type->valuestring, "hi") == 0) {
-        ESP_LOGI(TAG, "  -> hi (khai bao ben phat, xem lai log RX o tren de biet rate/fields da chap nhan)");
+        ESP_LOGI(TAG, "  -> hi, gui dev de hoan tat bat tay HLP/1");
+        s_send_dev_pending = true;
     } else if (strcmp(type->valuestring, "bye") == 0) {
         ESP_LOGI(TAG, "  -> bye (dien thoai chuan bi ngat/dung dan duong)");
     } else if (strcmp(type->valuestring, "nav") == 0) {
         // Thong tin dan duong tu app Android (Google Maps navigation).
         nav_data_t nav = {0};
+        nav.nav_state = -1;  // Duong JSON khong mang navigationState.
         cJSON *dir = cJSON_GetObjectItemCaseSensitive(root, "dir");
         cJSON *dist = cJSON_GetObjectItemCaseSensitive(root, "dist");
         cJSON *road = cJSON_GetObjectItemCaseSensitive(root, "road");
@@ -368,6 +390,156 @@ static int access_cb(uint16_t conn_handle, uint16_t attr_handle,
             return 0;
         }
 
+        // Frame relay plaintext cua VietMap hook:
+        // "VMSL" + version + speedLimit + currentSpeed + XOR(byte 0..6).
+        // Xu ly rieng va khong echo qua 0x1234 de app VietMap khong nham
+        // response nay voi handshake H50 proprietary.
+        if (first_byte != '{' && first_byte != '[') {
+            if (length > sizeof(s_last_h50_value) ||
+                os_mbuf_copydata(ctxt->om, 0, length, s_last_h50_value) != 0) {
+                return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+            }
+            s_last_h50_length = length;
+
+            static const uint8_t vmsl_magic[] = { 'V', 'M', 'S', 'L' };
+            if (length >= sizeof(vmsl_magic) &&
+                memcmp(s_last_h50_value, vmsl_magic, sizeof(vmsl_magic)) == 0) {
+                if (length != 8) {
+                    ESP_LOGW(TAG, "VMSL bo qua: do dai %u, can 8 byte", (unsigned)length);
+                    return 0;
+                }
+                if (s_last_h50_value[4] != 1) {
+                    ESP_LOGW(TAG, "VMSL bo qua: version %u khong ho tro",
+                             (unsigned)s_last_h50_value[4]);
+                    return 0;
+                }
+
+                uint8_t checksum = 0;
+                for (size_t i = 0; i < 7; ++i) {
+                    checksum ^= s_last_h50_value[i];
+                }
+                if (checksum != s_last_h50_value[7]) {
+                    ESP_LOGW(TAG, "VMSL bo qua: checksum nhan=0x%02x tinh=0x%02x",
+                             s_last_h50_value[7], checksum);
+                    return 0;
+                }
+
+                uint16_t limit_kmh = s_last_h50_value[5];
+                uint16_t speed_kmh = s_last_h50_value[6];
+                ESP_LOGI(TAG, "VMSL hop le: speed_limit=%u current_speed=%u checksum=0x%02x",
+                         limit_kmh, speed_kmh, checksum);
+                if (s_data_cb) {
+                    s_data_cb(speed_kmh, limit_kmh, s_cb_ctx);
+                }
+                return 0;
+            }
+
+            // Frame mo rong "VMSX" (14 byte) tu hook Android Auto:
+            //   0..3  magic "VMSX"
+            //   4     version = 1
+            //   5     speedLimit (km/h)
+            //   6     currentSpeed (km/h)
+            //   7     flags: bit0 overSpeed, bit1 underMinSpeedLimit,
+            //               bit2 hudConnected, bit3 alert phia truoc hop le
+            //   8     minSpeedLimit (km/h)
+            //   9     navigationState
+            //   10-11 khoang cach toi canh bao ke tiep (uint16 big-endian, met)
+            //   12    speedLimit cua canh bao do
+            //   13    XOR(byte 0..12)
+            // Cung khong echo qua 0x1234 nhu VMSL.
+            static const uint8_t vmsx_magic[] = { 'V', 'M', 'S', 'X' };
+            if (length >= sizeof(vmsx_magic) &&
+                memcmp(s_last_h50_value, vmsx_magic, sizeof(vmsx_magic)) == 0) {
+                if (length != 14) {
+                    ESP_LOGW(TAG, "VMSX bo qua: do dai %u, can 14 byte", (unsigned)length);
+                    return 0;
+                }
+                if (s_last_h50_value[4] != 1) {
+                    ESP_LOGW(TAG, "VMSX bo qua: version %u khong ho tro",
+                             (unsigned)s_last_h50_value[4]);
+                    return 0;
+                }
+
+                uint8_t checksum = 0;
+                for (size_t i = 0; i < 13; ++i) {
+                    checksum ^= s_last_h50_value[i];
+                }
+                if (checksum != s_last_h50_value[13]) {
+                    ESP_LOGW(TAG, "VMSX bo qua: checksum nhan=0x%02x tinh=0x%02x",
+                             s_last_h50_value[13], checksum);
+                    return 0;
+                }
+
+                uint16_t limit_kmh   = s_last_h50_value[5];
+                uint16_t speed_kmh   = s_last_h50_value[6];
+                uint8_t  flags       = s_last_h50_value[7];
+                uint16_t min_limit   = s_last_h50_value[8];
+                uint8_t  nav_state   = s_last_h50_value[9];
+                uint16_t alert_dist  = ((uint16_t)s_last_h50_value[10] << 8) |
+                                        (uint16_t)s_last_h50_value[11];
+                uint16_t alert_limit = s_last_h50_value[12];
+
+                bool over_speed  = (flags & 0x01) != 0;
+                bool under_min   = (flags & 0x02) != 0;
+                bool hud_linked  = (flags & 0x04) != 0;
+                bool alert_valid = (flags & 0x08) != 0;
+
+                ESP_LOGI(TAG, "VMSX hop le: limit=%u speed=%u min=%u nav_state=%u "
+                              "over=%d under_min=%d hud=%d",
+                         limit_kmh, speed_kmh, min_limit, nav_state,
+                         (int)over_speed, (int)under_min, (int)hud_linked);
+                if (alert_valid) {
+                    ESP_LOGI(TAG, "  -> canh bao phia truoc: cach %u m, gioi han %u km/h",
+                             alert_dist, alert_limit);
+                }
+
+                if (s_data_cb) {
+                    s_data_cb(speed_kmh, limit_kmh, s_cb_ctx);
+                }
+
+                // Dua thong tin mo rong len UI qua duong navigation san co.
+                if (s_nav_cb) {
+                    nav_data_t nav = { 0 };
+                    nav.nav_state = (int16_t)nav_state;
+                    if (alert_valid) {
+                        snprintf(nav.direction, sizeof(nav.direction), "alert");
+                        if (alert_dist >= 1000) {
+                            snprintf(nav.distance, sizeof(nav.distance), "%u.%ukm",
+                                     (unsigned)(alert_dist / 1000),
+                                     (unsigned)((alert_dist % 1000) / 100));
+                        } else {
+                            snprintf(nav.distance, sizeof(nav.distance), "%um",
+                                     (unsigned)alert_dist);
+                        }
+                        if (alert_limit > 0) {
+                            snprintf(nav.road, sizeof(nav.road), "Gioi han %u", alert_limit);
+                        }
+                    }
+                    if (min_limit > 0) {
+                        snprintf(nav.instruction, sizeof(nav.instruction),
+                                 "Toc do toi thieu %u km/h%s", min_limit,
+                                 under_min ? " (dang thap hon)" : "");
+                    } else if (over_speed) {
+                        snprintf(nav.instruction, sizeof(nav.instruction), "Dang vuot toc do");
+                    }
+                    if (nav.direction[0] || nav.instruction[0] || nav.nav_state >= 0) {
+                        s_nav_cb(&nav, s_nav_cb_ctx);
+                    }
+                }
+                return 0;
+            }
+
+            // Vietmap H50 gui frame binary proprietary (thuong 16 byte) vao
+            // 0x9ABC. Giu logic cu: READ tra frame gan nhat va notify 0x1234.
+            ESP_LOGI(TAG, "H50 WRITE 0x9ABC (%u byte), response qua 0x1234", (unsigned)length);
+            ESP_LOG_BUFFER_HEX_LEVEL(TAG, s_last_h50_value, length, ESP_LOG_INFO);
+            int rc = notify_bytes(s_last_h50_value, s_last_h50_length);
+            if (rc != 0) {
+                ESP_LOGW(TAG, "H50 notify 0x1234 chua gui duoc: rc=%d notify=%d", rc, s_notify_enabled);
+            }
+            return 0;
+        }
+
         // JSON text / HLP protocol -> queue for protocol_task
         if (length > HLP_MAX_FRAME) {
             return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
@@ -383,6 +555,11 @@ static int access_cb(uint16_t conn_handle, uint16_t attr_handle,
     }
 
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
+        if (attr_handle == s_tx_handle) {
+            ESP_LOGI(TAG, "H50 READ 0x9ABC -> %u byte", (unsigned)s_last_h50_length);
+            return os_mbuf_append(ctxt->om, s_last_h50_value, s_last_h50_length) == 0
+                    ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
+        }
         static const char caps[] = "{\"v\":1,\"caps\":{\"transport\":\"ble\",\"maxFrame\":512}}\n";
         return os_mbuf_append(ctxt->om, caps, sizeof(caps) - 1) == 0
                 ? 0 : BLE_ATT_ERR_INSUFFICIENT_RES;
@@ -408,16 +585,21 @@ static int rx_access_cb(uint16_t conn_handle, uint16_t attr_handle,
 }
 
 static struct ble_gatt_chr_def s_characteristics[] = {
-    {
-        .uuid = &s_tx_uuid.u,
-        .access_cb = access_cb,
-        .flags = BLE_GATT_CHR_F_WRITE, // "write with response" theo yeu cau Document 9
-    },
+    // Vietmap H50 discovery duyet theo thu tu va dung ngay khi gap 0x9ABC,
+    // vi vay 0x1234 notify BAT BUOC phai dung truoc 0x9ABC.
     {
         .uuid = &s_rx_uuid.u,
         .access_cb = rx_access_cb,
         .val_handle = &s_rx_handle,
         .flags = BLE_GATT_CHR_F_NOTIFY, // CCCD 0x2902 duoc NimBLE tu tao
+    },
+    {
+        .uuid = &s_tx_uuid.u,
+        .access_cb = access_cb,
+        .val_handle = &s_tx_handle,
+        .flags = BLE_GATT_CHR_F_READ |
+                 BLE_GATT_CHR_F_WRITE |          // write with response (Vietmap)
+                 BLE_GATT_CHR_F_WRITE_NO_RSP,    // giu tuong thich Flutter test client
     },
     {
         .uuid = &s_caps_uuid.u,
@@ -438,8 +620,7 @@ static const struct ble_gatt_svc_def s_gatt_svcs[] = {
 
 static void start_advertise(void)
 {
-    // UUID 128-bit khong du cho vua chung ten thiet bi trong 1 goi adv 31
-    // byte, nen dat rieng trong scan-response.
+    // Dat ten thiet bi trong advertising va UUID service trong scan-response.
     struct ble_hs_adv_fields fields;
     memset(&fields, 0, sizeof(fields));
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
@@ -455,9 +636,9 @@ static void start_advertise(void)
 
     struct ble_hs_adv_fields rsp_fields;
     memset(&rsp_fields, 0, sizeof(rsp_fields));
-    rsp_fields.uuids128 = (ble_uuid128_t *)&s_svc_uuid;
-    rsp_fields.num_uuids128 = 1;
-    rsp_fields.uuids128_is_complete = 1;
+    rsp_fields.uuids16 = (ble_uuid16_t *)&s_svc_uuid;
+    rsp_fields.num_uuids16 = 1;
+    rsp_fields.uuids16_is_complete = 1;
 
     rc = ble_gap_adv_rsp_set_fields(&rsp_fields);
     if (rc != 0) {
@@ -499,11 +680,10 @@ static int gap_event(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_SUBSCRIBE:
         if (event->subscribe.attr_handle == s_rx_handle) {
             s_notify_enabled = event->subscribe.cur_notify;
-            ESP_LOGI(TAG, "Subscribe RX: cur_notify=%d", event->subscribe.cur_notify);
-            if (s_notify_enabled) {
-                // Gui "dev" ngay sau khi notify duoc bat (Document 9: bat tay HLP).
-                s_send_dev_pending = true;
-            }
+            ESP_LOGI(TAG, "Subscribe RX 0x1234: cur_notify=%d", event->subscribe.cur_notify);
+            // Khong gui JSON HLP ngay luc subscribe: Vietmap H50 cung dung
+            // 0x1234 va se coi goi JSON khong ma hoa la response sai. HLP client
+            // se gui message "hi" va nhan "dev" sau.
         }
         return 0;
     case BLE_GAP_EVENT_MTU:
