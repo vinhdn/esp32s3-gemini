@@ -2,9 +2,13 @@ package com.esp32nav.service
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.graphics.Rect
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import com.esp32nav.CarNavApplication
 
 /**
@@ -42,14 +46,28 @@ class VietmapAccessibilityService : AccessibilityService() {
         @Volatile var isNavigating: Boolean = false
         @Volatile var lastUpdateTime: Long = 0
         @Volatile var isServiceRunning: Boolean = false
+
+        // Vị trí (tọa độ màn hình thật) của bong bóng nổi VietMap Live hiện
+        // tại — null nếu chưa tìm thấy/đang không hiển thị. Dùng để crop
+        // frame MediaProjection thay vì đọc text (bong bóng có 2 icon biển
+        // báo dạng ảnh, không phải text, nên parse text không lấy đủ).
+        @Volatile var bubbleBoundsInScreen: Rect? = null
+
+        private const val BUBBLE_PACKAGE = "vn.vietmap.live"
+        // Bong bóng là 1 window nhỏ (khác hẳn window app chính full-screen).
+        // Giới hạn trên để loại bỏ nhầm với window MainActivity full-screen.
+        private const val BUBBLE_MAX_AREA_FRACTION = 0.25f
     }
 
     private var lastDebugLog = 0L
+    private val boundsHandler = Handler(Looper.getMainLooper())
+    private var boundsPollStarted = false
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         isServiceRunning = true
         Log.i(TAG, "✅ Accessibility Service connected - monitoring Vietmap/DatMap/Maps")
+        startBubbleBoundsPolling()
 
         val info = serviceInfo ?: AccessibilityServiceInfo()
         info.eventTypes = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
@@ -61,7 +79,9 @@ class VietmapAccessibilityService : AccessibilityService() {
                 AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS or
                 AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
                 AccessibilityServiceInfo.FLAG_REQUEST_ENHANCED_WEB_ACCESSIBILITY
-        info.notificationTimeout = 300
+        // 300ms trước đây làm hệ thống gộp (coalesce) sự kiện lâu hơn cần
+        // thiết, cộng dồn vào độ trễ bắt thay đổi trên bong bóng.
+        info.notificationTimeout = 100
         // Monitor ALL packages to catch Vietmap even on secondary display
         // packageNames = null means all packages
         info.packageNames = null
@@ -85,17 +105,24 @@ class VietmapAccessibilityService : AccessibilityService() {
 
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                // Nếu event từ package đã biết → xử lý trực tiếp
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+            // TYPE_VIEW_TEXT_CHANGED: sự kiện Android bắn ra khi TextView.setText()
+            // — bong bóng đổi số tốc độ/khoảng cách chủ yếu qua đường này, KHÔNG
+            // phải TYPE_WINDOW_CONTENT_CHANGED. Trước đây có subscribe (info.eventTypes)
+            // nhưng không xử lý ở đây → bỏ lỡ phần lớn thay đổi thực tế, đây là
+            // nguyên nhân chính gây "chậm/hay miss" khi bắt trạng thái bong bóng.
+            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> {
+                // QUAN TRỌNG: bong bóng nổi của VietMap là SYSTEM_ALERT_WINDOW
+                // overlay, KHÔNG BAO GIỜ là "active window" (chỉ Activity toàn
+                // màn hình mới active) — rootInActiveWindow (processWindowContent)
+                // không bao giờ thấy nó. Luôn dùng scanAllWindows() (duyệt
+                // getWindows(), thấy được cả overlay) làm đường chính; giữ
+                // processWindowContent() cho trường hợp app full-screen thật.
                 val isMonitored = MONITORED_PACKAGES.any { packageName.contains(it) || it.contains(packageName) }
                 if (isMonitored) {
                     isNavigating = true
-                    processWindowContent(packageName)
-                } else {
-                    // Event từ package khác (có thể là launcher chứa Vietmap embed)
-                    // → Scan tất cả windows tìm Vietmap content
-                    scanAllWindows()
                 }
+                scanAllWindows()
             }
         }
     }
@@ -108,7 +135,71 @@ class VietmapAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         isServiceRunning = false
+        boundsPollStarted = false
+        boundsHandler.removeCallbacksAndMessages(null)
+        bubbleBoundsInScreen = null
         Log.i(TAG, "Accessibility Service destroyed")
+    }
+
+    /**
+     * Bong bóng có thể bị kéo-thả bất kỳ lúc nào, không phải lúc nào cũng
+     * sinh AccessibilityEvent (đặc biệt trong lúc drag) — nên poll định kỳ
+     * thay vì chỉ dựa vào event, để bounds luôn theo kịp vị trí thật.
+     */
+    private fun startBubbleBoundsPolling() {
+        if (boundsPollStarted) return
+        boundsPollStarted = true
+        val poll = object : Runnable {
+            override fun run() {
+                if (!boundsPollStarted) return
+                updateBubbleBounds()
+                boundsHandler.postDelayed(this, 500)
+            }
+        }
+        boundsHandler.post(poll)
+    }
+
+    /**
+     * Tìm window overlay (SYSTEM_ALERT_WINDOW) của vn.vietmap.live nhỏ nhất
+     * đang hiển thị — đó chính là bong bóng nổi (window app chính full-screen
+     * bị loại vì vượt BUBBLE_MAX_AREA_FRACTION). Lưu bounds vào
+     * bubbleBoundsInScreen (tọa độ pixel màn hình thật) cho
+     * MapStreamManager crop khi chụp qua MediaProjection.
+     */
+    private fun updateBubbleBounds() {
+        try {
+            val allWindows = windows ?: run {
+                bubbleBoundsInScreen = null
+                return
+            }
+            val screenArea = resources.displayMetrics.let { it.widthPixels.toLong() * it.heightPixels.toLong() }
+            var best: Rect? = null
+            var bestArea = Long.MAX_VALUE
+
+            for (window in allWindows) {
+                val root = window.root
+                val pkg = root?.packageName?.toString()
+                root?.recycle()
+                if (pkg != BUBBLE_PACKAGE) continue
+
+                val bounds = Rect()
+                window.getBoundsInScreen(bounds)
+                val area = bounds.width().toLong() * bounds.height().toLong()
+                if (area <= 0 || area > screenArea * BUBBLE_MAX_AREA_FRACTION) continue
+
+                if (area < bestArea) {
+                    bestArea = area
+                    best = Rect(bounds)
+                }
+            }
+
+            if (best != bubbleBoundsInScreen) {
+                Log.d(TAG, "Bubble bounds: $best")
+            }
+            bubbleBoundsInScreen = best
+        } catch (e: Exception) {
+            Log.e(TAG, "updateBubbleBounds error: ${e.message}")
+        }
     }
 
     /**
@@ -120,9 +211,11 @@ class VietmapAccessibilityService : AccessibilityService() {
     private var lastScanAllTime = 0L
 
     private fun scanAllWindows() {
-        // Throttle: scan tối đa 1 lần/2 giây (tránh CPU hog)
+        // Throttle: trước là 2000ms — quá chậm cho bong bóng đang lái, hay bị
+        // miss thay đổi (biển báo/khoảng cách đổi liên tục). 600ms vẫn đủ để
+        // tránh CPU hog vì mỗi scan chỉ vài window nhỏ.
         val now = System.currentTimeMillis()
-        if (now - lastScanAllTime < 2000) return
+        if (now - lastScanAllTime < 600) return
         lastScanAllTime = now
 
         try {
@@ -130,40 +223,34 @@ class VietmapAccessibilityService : AccessibilityService() {
             for (window in allWindows) {
                 val root = window.root ?: continue
                 try {
+                    // Bong bóng nổi VietMap Live: đọc trực tiếp theo view ID
+                    // cố định (xác nhận qua dump thật) thay vì đoán theo
+                    // pattern text như parseVietmapData cũ (dành cho định
+                    // dạng bubble khác/cũ hơn, không khớp bản hiện tại).
+                    if (root.packageName?.toString() == BUBBLE_PACKAGE) {
+                        parseBubbleWidget(window, root)
+                    }
+
+                    // VietMap Live: CHỈ lấy dữ liệu từ bong bóng (parseBubbleWidget ở
+                    // trên, theo view ID cố định) — đã bỏ heuristic "embedded vietmap"
+                    // (đoán content theo pattern "km/h" trên toàn bộ node tree của mọi
+                    // window) vì lỗi thời (dành cho định dạng bubble cũ) và tốn CPU
+                    // (duyệt toàn bộ tree của MỌI window mỗi lần scan).
+                    if (root.packageName?.toString() == BUBBLE_PACKAGE) continue
+
                     val allTexts = mutableListOf<NodeTextInfo>()
                     collectAllTexts(root, allTexts, 0)
 
                     if (allTexts.isEmpty()) continue
-
-                    // Kiểm tra xem window này có chứa Vietmap content không
-                    // Dấu hiệu: có node với "km/h" (vietmap speed display)
-                    val hasVietmapContent = allTexts.any { info ->
-                        val combined = "${info.text} ${info.contentDescription}"
-                        combined.contains("km/h", ignoreCase = true) &&
-                        combined.split("\n").size >= 2
-                    }
 
                     // Dấu hiệu Google Maps: có node với view id chứa "maps"
                     val hasGoogleMapsContent = allTexts.any { info ->
                         info.viewId.contains("com.google.android.apps.maps")
                     }
 
-                    when {
-                        hasVietmapContent -> {
-                            isNavigating = true
-                            parseVietmapData(allTexts)
-                            if (System.currentTimeMillis() - lastDebugLog > 10000) {
-                                lastDebugLog = System.currentTimeMillis()
-                                Log.d(TAG, "=== [embedded vietmap] ${allTexts.size} nodes (window: ${window.title}) ===")
-                                allTexts.take(10).forEach { info ->
-                                    Log.d(TAG, "  [${info.viewId}] text='${info.text}' desc='${info.contentDescription}'")
-                                }
-                            }
-                        }
-                        hasGoogleMapsContent -> {
-                            isNavigating = true
-                            parseGoogleMapsData(allTexts)
-                        }
+                    if (hasGoogleMapsContent) {
+                        isNavigating = true
+                        parseGoogleMapsData(allTexts)
                     }
                 } finally {
                     root.recycle()
@@ -533,6 +620,259 @@ class VietmapAccessibilityService : AccessibilityService() {
                 child.recycle()
             }
         }
+    }
+
+    // ─── Bong bóng nổi VietMap Live: đọc trực tiếp theo view ID cố định ───
+    // (xác nhận qua dump thật trên thiết bị) — chụp NGUYÊN bong bóng rồi gửi
+    // thẳng qua board, thay UI toc do cũ trên board (đã xoá, xem
+    // ui_screens.c/app_main.c) bằng đúng ảnh bong bóng. Không dùng
+    // MediaProjection — chụp bằng AccessibilityService.takeScreenshotOfWindow()
+    // (API 34+, chụp ĐÚNG window bong bóng, không cần crop) hoặc
+    // takeScreenshot() toàn màn hình + crop theo bubbleBoundsInScreen (API
+    // 30-33, thiết bị test hiện tại là Android 12 nên luôn đi nhánh này).
+    // Không cần xin quyền riêng, chỉ cần capability canTakeScreenshot đã khai
+    // báo trong accessibility_service_config.xml.
+
+    private var lastVmsxCurrentSpeed = Int.MIN_VALUE
+    private var lastVmsxSpeedLimit = Int.MIN_VALUE
+    private var lastVmsxAlertLimit = Int.MIN_VALUE
+    private var lastVmsxAlertDistance = Int.MIN_VALUE
+
+    /**
+     * Đọc 4 giá trị trên bong bóng — dùng làm tín hiệu "có đổi hay không" để
+     * quyết định gửi ảnh NGAY, thay vì gate cứng bỏ lỡ thay đổi (vấn đề
+     * trước) hoặc gửi vô điều kiện mỗi lần scan (làm board không xử lý kịp,
+     * theo phản hồi thực tế). Nếu không đổi, vẫn gửi 1 lần/giây (heartbeat)
+     * để không bỏ lỡ thay đổi hình ảnh thuần túy (icon/màu) mà 4 giá trị này
+     * không phản ánh được.
+     */
+    private fun parseBubbleWidget(window: AccessibilityWindowInfo, root: AccessibilityNodeInfo) {
+        var currentSpeedText: String? = null
+        var speedLimitText: String? = null
+        var nextLimitText: String? = null
+        var alertDistanceText: String? = null
+
+        fun visit(node: AccessibilityNodeInfo) {
+            val id = node.viewIdResourceName
+            if (id != null) {
+                when {
+                    id.endsWith("current_speed_textview") -> currentSpeedText = node.text?.toString()
+                    id.endsWith("speed_limit_widget_text_view") -> speedLimitText = node.text?.toString()
+                    id.endsWith("place_holder_textView") -> nextLimitText = node.text?.toString()
+                    id.endsWith("warning_speed_distance_text_view") -> alertDistanceText = node.text?.toString()
+                }
+            }
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                try {
+                    visit(child)
+                } finally {
+                    child.recycle()
+                }
+            }
+        }
+        visit(root)
+
+        // Không tìm thấy node nào → không phải window bong bóng (vd window
+        // app chính full-screen), bỏ qua.
+        if (currentSpeedText == null && speedLimitText == null &&
+            nextLimitText == null && alertDistanceText == null
+        ) {
+            return
+        }
+
+        val parsedSpeed = currentSpeedText?.trim()?.toIntOrNull() ?: -1
+        val speedLimit = speedLimitText?.trim()?.let { if (it == "!") 0 else it.toIntOrNull() } ?: 0
+        val alertLimit = nextLimitText?.trim()?.let { if (it == "--") 0 else it.toIntOrNull() } ?: 0
+        val alertDistance = parseDistanceMeters(alertDistanceText)
+
+        // currentSpeedLimit/currentSpeed vẫn cập nhật cho UI trong app (xem
+        // MainScreen) — không còn dùng để gửi VMSX qua board nữa.
+        if (speedLimit > 0) currentSpeedLimit = speedLimit
+        if (parsedSpeed >= 0) currentSpeed = parsedSpeed
+        lastUpdateTime = System.currentTimeMillis()
+        isNavigating = true
+
+        val changed = parsedSpeed != lastVmsxCurrentSpeed || speedLimit != lastVmsxSpeedLimit ||
+            alertLimit != lastVmsxAlertLimit || alertDistance != lastVmsxAlertDistance
+        lastVmsxCurrentSpeed = parsedSpeed
+        lastVmsxSpeedLimit = speedLimit
+        lastVmsxAlertLimit = alertLimit
+        lastVmsxAlertDistance = alertDistance
+
+        val heartbeatDue = System.currentTimeMillis() - lastScreenshotAt >= heartbeatIntervalMs
+        if (changed || heartbeatDue) {
+            captureAndSendBubbleImage(window.id)
+        }
+    }
+
+    private var lastScreenshotAt = 0L
+
+    // Sàn cứng giữa 2 lần chụp/gửi kể cả khi liên tục đổi — né giới hạn tần
+    // suất của takeScreenshot()/takeScreenshotOfWindow() phía hệ thống VÀ
+    // tránh làm board (giải mã JPEG trên ESP32) không xử lý kịp.
+    private val screenshotMinIntervalMs = 500L
+
+    // Khi bong bóng KHÔNG đổi (theo 4 giá trị theo dõi ở trên), vẫn gửi định
+    // kỳ 1 lần/giây — bắt các thay đổi thuần hình ảnh (icon/màu) không phản
+    // ánh qua text, mà không gửi dồn dập như trước.
+    private val heartbeatIntervalMs = 1000L
+
+    private fun captureAndSendBubbleImage(windowId: Int) {
+        val now = System.currentTimeMillis()
+        if (now - lastScreenshotAt < screenshotMinIntervalMs) return
+        lastScreenshotAt = now
+
+        // API 34+: chụp ĐÚNG window bong bóng, hệ thống tự crop đúng bounds
+        // — nhanh hơn, ít dữ liệu hơn takeScreenshot() toàn màn hình.
+        if (android.os.Build.VERSION.SDK_INT >= 34) {
+            try {
+                takeScreenshotOfWindow(
+                    windowId,
+                    mainExecutor,
+                    object : TakeScreenshotCallback {
+                        override fun onSuccess(result: ScreenshotResult) {
+                            handleScreenshotResult(result, cropRect = null)
+                        }
+
+                        override fun onFailure(errorCode: Int) {
+                            Log.w(TAG, "takeScreenshotOfWindow thất bại ($errorCode), thử full-screen")
+                            captureFullScreenFallback()
+                        }
+                    }
+                )
+                return
+            } catch (e: Exception) {
+                Log.e(TAG, "takeScreenshotOfWindow lỗi: ${e.message}")
+            }
+        }
+        captureFullScreenFallback()
+    }
+
+    /**
+     * Chụp toàn màn hình bằng takeScreenshot() (API 30+) rồi crop theo
+     * bubbleBoundsInScreen — dùng khi không có takeScreenshotOfWindow()
+     * (API < 34, vd thiết bị test hiện tại là Android 12) hoặc khi nó lỗi.
+     */
+    private fun captureFullScreenFallback() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) {
+            Log.w(TAG, "takeScreenshot() cần Android 11+, bỏ qua trên thiết bị này")
+            return
+        }
+        val bubbleRect = bubbleBoundsInScreen ?: return
+        try {
+            takeScreenshot(
+                android.view.Display.DEFAULT_DISPLAY,
+                mainExecutor,
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(result: ScreenshotResult) {
+                        handleScreenshotResult(result, cropRect = bubbleRect)
+                    }
+
+                    override fun onFailure(errorCode: Int) {
+                        Log.w(TAG, "takeScreenshot thất bại: $errorCode")
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "takeScreenshot lỗi: ${e.message}")
+        }
+    }
+
+    /**
+     * cropRect null (đường takeScreenshotOfWindow) → dùng nguyên ảnh, hệ
+     * thống đã crop đúng window rồi. cropRect khác null (đường full-screen
+     * fallback) → tự crop theo bounds bong bóng.
+     */
+    private fun handleScreenshotResult(result: ScreenshotResult, cropRect: Rect?) {
+        try {
+            val hwBitmap = android.graphics.Bitmap.wrapHardwareBuffer(result.hardwareBuffer, result.colorSpace)
+            val bitmap = hwBitmap?.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+            result.hardwareBuffer.close()
+            if (bitmap == null) return
+            val target = if (cropRect != null) {
+                val c = cropSafe(bitmap, cropRect)
+                bitmap.recycle()
+                c
+            } else {
+                bitmap
+            }
+            if (target != null) {
+                // Board (canvas 240x240, xem img_stream.c) không cần ảnh to
+                // hơn thế — thu nhỏ trước khi nén để chắc chắn dưới
+                // IMG_MAX_JPEG_SIZE (20KB) của firmware.
+                val scaled = scaleToFit(target, 240)
+                sendComposite(scaled)
+                scaled.recycle()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "xử lý screenshot lỗi: ${e.message}")
+        }
+    }
+
+    private fun cropSafe(source: android.graphics.Bitmap, rect: Rect?): android.graphics.Bitmap? {
+        if (rect == null || rect.isEmpty) return null
+        val l = rect.left.coerceIn(0, source.width - 1)
+        val t = rect.top.coerceIn(0, source.height - 1)
+        val r = rect.right.coerceIn(l + 1, source.width)
+        val b = rect.bottom.coerceIn(t + 1, source.height)
+        if (r <= l || b <= t) return null
+        return try {
+            android.graphics.Bitmap.createBitmap(source, l, t, r - l, b - t)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Thu nhỏ (giữ tỷ lệ) nếu cạnh dài nhất > maxDim — không phóng to.
+     */
+    private fun scaleToFit(bitmap: android.graphics.Bitmap, maxDim: Int): android.graphics.Bitmap {
+        val w = bitmap.width
+        val h = bitmap.height
+        if (w <= maxDim && h <= maxDim) return bitmap
+        val scale = maxDim.toFloat() / maxOf(w, h)
+        val newW = (w * scale).toInt().coerceAtLeast(1)
+        val newH = (h * scale).toInt().coerceAtLeast(1)
+        val scaled = android.graphics.Bitmap.createScaledBitmap(bitmap, newW, newH, true)
+        bitmap.recycle()
+        return scaled
+    }
+
+    // Để margin dưới IMG_MAX_JPEG_SIZE (20*1024 byte, xem img_stream.c) —
+    // vượt ngưỡng đó firmware sẽ hủy frame (buffer overflow trong lúc ghép chunk).
+    private val maxJpegBytes = 18 * 1024
+
+    private fun sendComposite(bitmap: android.graphics.Bitmap) {
+        val app = application as? CarNavApplication ?: return
+        var quality = 85
+        var bytes: ByteArray
+        while (true) {
+            val stream = java.io.ByteArrayOutputStream()
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, stream)
+            bytes = stream.toByteArray()
+            if (bytes.size <= maxJpegBytes || quality <= 25) break
+            quality -= 20
+        }
+        if (bytes.size > maxJpegBytes) {
+            Log.w(TAG, "bubble image vẫn ${bytes.size} byte (> $maxJpegBytes) sau khi giảm chất lượng, bỏ qua frame")
+            return
+        }
+        Log.i(TAG, "🖼️ bubble image: gửi ${bytes.size} byte (q=$quality, ${bitmap.width}x${bitmap.height}) " +
+            "tới board (connected=${app.imageRelay.isConnected})")
+        app.imageRelay.sendJpegFrame(bytes)
+    }
+
+    /**
+     * "--" / rỗng → 0 (không có cảnh báo). Có thể kèm đơn vị "m"/"km".
+     */
+    private fun parseDistanceMeters(raw: String?): Int {
+        val text = raw?.trim() ?: return 0
+        if (text.isBlank() || text == "--") return 0
+        val match = Regex("""([\d.,]+)\s*(km|m)?""", RegexOption.IGNORE_CASE).find(text) ?: return 0
+        val value = match.groupValues[1].replace(",", ".").toFloatOrNull() ?: return 0
+        val unit = match.groupValues[2].lowercase()
+        return if (unit == "km") (value * 1000).toInt() else value.toInt()
     }
 
     private data class NodeTextInfo(

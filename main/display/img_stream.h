@@ -29,6 +29,11 @@ void img_stream_feed_chunk(const uint8_t *data, uint16_t len);
 // An/hien canvas anh (de chuyen doi giua man hinh HUD va man hinh anh).
 void img_stream_show(bool visible);
 
+// Cham nho o goc man hinh bao trang thai ket noi BLE toi dien thoai (xanh =
+// connected, do = mat ket noi). Man hinh gio chi con canvas anh bong bong
+// nen can 1 dau hieu ket noi toi thieu, khong dua lai toan bo UI toc do cu.
+void img_stream_set_connected(bool connected);
+
 // Tra ve true neu module da khoi tao thanh cong.
 bool img_stream_is_ready(void);
 

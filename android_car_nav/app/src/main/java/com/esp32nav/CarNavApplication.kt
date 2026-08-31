@@ -3,6 +3,7 @@ package com.esp32nav
 import android.app.Application
 import android.content.Intent
 import com.esp32nav.ble.BleManager
+import com.esp32nav.carhost.ImageRelayBle
 import com.esp32nav.model.NavigationData
 import com.esp32nav.model.VehicleData
 import com.esp32nav.obd.ObdManager
@@ -27,6 +28,12 @@ class CarNavApplication : Application() {
     lateinit var mapStreamManager: MapStreamManager
         private set
 
+    // Kết nối BLE riêng cho luồng gửi bitmap bong bóng — KHÔNG dùng chung
+    // BleManager (giao thức HLP cũ, không khớp firmware hiện tại). Xem
+    // esp32/android_car_nav/carhost/ImageRelayBle.kt.
+    lateinit var imageRelay: ImageRelayBle
+        private set
+
     private val _currentNavData = MutableStateFlow<NavigationData?>(null)
     val currentNavData: StateFlow<NavigationData?> = _currentNavData.asStateFlow()
 
@@ -48,15 +55,21 @@ class CarNavApplication : Application() {
         bleManager = BleManager(this)
         obdManager = ObdManager(this)
         vhalManager = VhalManager(this)
-        mapStreamManager = MapStreamManager(this, bleManager)
+        imageRelay = ImageRelayBle(this)
+        mapStreamManager = MapStreamManager(this, imageRelay)
 
-        // Tự động bắt đầu scan BLE ngay khi app khởi tạo
-        bleManager.setAutoReconnect(true)
+        // Kết nối tới board (BleManager.startScan() + ImageRelayBle.start())
+        // CHỈ được khởi động bên trong BleForegroundService (onCreate/onDestroy)
+        // — không ở đây, không ở Activity. Application.onCreate() chạy bất cứ
+        // khi nào process được tạo (kể cả do AccessibilityService/BootReceiver
+        // khởi tạo process độc lập với việc user mở app), nên gọi startScan()
+        // ở đây từng gây đăng ký scan trùng lặp/cạn tài nguyên BLE của hệ
+        // thống. Ở đây chỉ đảm bảo service (nơi thực sự quản lý kết nối)
+        // được khởi động.
         scope.launch {
             // Delay nhỏ cho hệ thống ổn định sau boot
             kotlinx.coroutines.delay(2000)
             startForegroundService()
-            bleManager.startScan()
         }
 
         // Thử kết nối VHAL (sẽ thành công trên Android Automotive)

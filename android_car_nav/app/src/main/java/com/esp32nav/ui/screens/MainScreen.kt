@@ -79,11 +79,12 @@ fun MainScreen(
 
                 ConnectionStatus(
                     bleState = bleState,
-                    onConnect = {
-                        bleManager.setAutoReconnect(true)
-                        bleManager.startScan()
-                    },
-                    onDisconnect = { bleManager.disconnect() }
+                    // Kết nối board chỉ sống trong BleForegroundService — Activity/
+                    // Compose không gọi bleManager.startScan()/disconnect() trực
+                    // tiếp nữa, chỉ start/stop service (service tự lo phần kết nối
+                    // trong onCreate/onDestroy).
+                    onConnect = { application.startForegroundService() },
+                    onDisconnect = { application.stopForegroundService() }
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))

@@ -32,7 +32,6 @@ class MainActivity : ComponentActivity() {
         val allGranted = results.values.all { it }
         if (allGranted) {
             app.startForegroundService()
-            requestScreenCapture()
         }
     }
 
@@ -81,19 +80,15 @@ class MainActivity : ComponentActivity() {
         }
         if (needed.isEmpty()) {
             app.startForegroundService()
-            requestScreenCapture()
         } else {
             permissionLauncher.launch(needed.toTypedArray())
         }
     }
 
-    private fun requestScreenCapture() {
-        // Request screen capture permission nếu chưa streaming
-        if (!app.mapStreamManager.isStreamingActive()) {
-            val intent = app.mapStreamManager.getProjectionIntent()
-            screenCaptureLauncher.launch(intent)
-        }
-    }
+    // Đã dừng dùng MediaProjection (chụp/crop màn hình) — chuyển sang đọc
+    // dữ liệu bong bóng qua VietmapAccessibilityService (accessibility node
+    // tree) thay vì chụp bitmap. Giữ lại screenCaptureLauncher/MapStreamManager
+    // trong code (không xoá) phòng cần dùng lại, nhưng không còn tự kích hoạt.
 
     private fun requestBlePermissions() {
         val needed = getRequiredPermissions().filter {

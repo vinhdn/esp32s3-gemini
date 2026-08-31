@@ -45,6 +45,14 @@ class BleForegroundService : Service() {
         // Scope này sống cùng service, KHÔNG phụ thuộc vào Activity
         observeBleState()
         observeReceivedMessages()
+
+        // Kết nối board (BleManager + ImageRelayBle) CHỈ sống trong service:
+        // bắt đầu ở đây, dừng ở onDestroy. Activity/Application không được
+        // tự gọi startScan()/connect() nữa — chỉ start/stop service này.
+        val app = application as? CarNavApplication
+        app?.bleManager?.setAutoReconnect(true)
+        app?.bleManager?.startScan()
+        app?.imageRelay?.start()
     }
 
     /**
@@ -108,6 +116,9 @@ class BleForegroundService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         serviceScope.cancel()
+        val app = application as? CarNavApplication
+        app?.bleManager?.disconnect()
+        app?.imageRelay?.stop()
         Log.w(TAG, "Foreground service destroyed")
         @Suppress("DEPRECATION")
         stopForeground(true) // Compatible with API 28+ (STOP_FOREGROUND_REMOVE is API 33+)

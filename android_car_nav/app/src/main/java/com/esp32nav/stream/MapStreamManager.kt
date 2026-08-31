@@ -16,46 +16,44 @@ import android.os.HandlerThread
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
-import com.esp32nav.ble.BleManager
+import com.esp32nav.carhost.ImageRelayBle
+import com.esp32nav.service.VietmapAccessibilityService
 import java.io.ByteArrayOutputStream
 
 /**
- * Captures the screen via MediaProjection, scales to 240x240,
- * compresses to JPEG, and streams over BLE to ESP32.
+ * Chụp bong bóng nổi (floating bubble) của VietMap Live qua MediaProjection,
+ * crop đúng vùng bong bóng (tọa độ lấy từ VietmapAccessibilityService — xem
+ * updateBubbleBounds()), giữ nguyên tỷ lệ (không méo), gửi JPEG qua BLE
+ * (ImageRelayBle) cho ESP32 hiển thị.
  *
- * BLE frame protocol (simple):
- * - Each JPEG frame is sent as sequential BLE writes (no response)
- * - ESP32 detects frame start by 0xFF 0xD8 (JPEG SOI marker)
- * - ESP32 detects frame end by 0xFF 0xD9 (JPEG EOI marker)
- * - Short delay between frames for ESP32 to decode
+ * Vì sao chụp bitmap thay vì đọc accessibility text: bong bóng hiện có 4
+ * dữ liệu (biển giới hạn tốc độ hiện tại DẠNG ẢNH, tốc độ hiện tại dạng số,
+ * biển giới hạn tiếp theo DẠNG ẢNH, khoảng cách camera) — 2 trong 4 là ảnh
+ * biển báo, accessibility node text/contentDescription không đọc được nội
+ * dung ảnh, nên chụp nguyên bitmap là cách nhanh và đầy đủ nhất.
+ *
+ * BLE frame protocol: xem ImageRelayBle/img_stream.c trên ESP32 — JPEG thô
+ * chia chunk theo MTU, ESP32 tự nhận biết SOI (0xFFD8)/EOI (0xFFD9).
  */
 class MapStreamManager(
     private val context: Context,
-    private val bleManager: BleManager
+    private val imageRelay: ImageRelayBle,
 ) {
     companion object {
         private const val TAG = "MapStreamManager"
         const val REQUEST_CODE_SCREEN_CAPTURE = 9001
 
-        // Output gửi tới ESP32 luôn là 240x240
-        private const val CAPTURE_WIDTH = 240
-        private const val CAPTURE_HEIGHT = 240
-        private const val JPEG_QUALITY = 25
+        // Board là 240x240 (BOARD_LCD_H_RES/V_RES trong img_stream.c).
+        private const val BOARD_WIDTH = 240
+        private const val BOARD_HEIGHT = 240
+        private const val JPEG_QUALITY = 35
         private const val DEFAULT_FPS = 4
-        private const val INTER_FRAME_DELAY_MS = 50L
-
-        // Chế độ đơn giản hóa: lọc màu giữ đường, bỏ text/nền
-        // true = chỉ hiện lines tuyến đường (nền đen, đường sáng)
-        // false = ảnh map gốc
-        const val SIMPLIFY_MODE_DEFAULT = true
+        private const val INTER_FRAME_DELAY_MS = 30L
     }
 
     // Full screen capture dimensions (set khi start)
     private var captureFullWidth = 0
     private var captureFullHeight = 0
-
-    @Volatile
-    var simplifyMode: Boolean = SIMPLIFY_MODE_DEFAULT
 
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
@@ -125,7 +123,7 @@ class MapStreamManager(
         screenDensity = metrics.densityDpi
         captureFullWidth = metrics.widthPixels
         captureFullHeight = metrics.heightPixels
-        Log.i(TAG, "Screen: ${captureFullWidth}x${captureFullHeight} density=$screenDensity, simplify=$simplifyMode")
+        Log.i(TAG, "Screen: ${captureFullWidth}x${captureFullHeight} density=$screenDensity")
 
         // Create capture thread
         captureThread = HandlerThread("MapCapture").also { it.start() }
@@ -135,7 +133,10 @@ class MapStreamManager(
         streamingThread = HandlerThread("MapStream").also { it.start() }
         streamingHandler = Handler(streamingThread!!.looper)
 
-        // ImageReader ở full screen resolution để crop được vùng map
+        // ImageReader ở full screen resolution — cần full vì VirtualDisplay
+        // AUTO_MIRROR phải khớp đúng kích thước màn hình thật, sau đó mới
+        // crop lại đúng vùng bong bóng (tọa độ accessibility cũng là tọa độ
+        // màn hình thật nên khớp trực tiếp, không cần quy đổi tỷ lệ).
         imageReader = ImageReader.newInstance(
             captureFullWidth, captureFullHeight,
             PixelFormat.RGBA_8888, 2
@@ -212,9 +213,24 @@ class MapStreamManager(
 
     private var frameCounter = 0
     private var nullImageCounter = 0
+    private var noBubbleCounter = 0
 
     private fun captureAndSendFrame() {
         val reader = imageReader ?: return
+
+        // Không có bong bóng đang hiển thị (app không chạy, hoặc bong bóng
+        // đang tắt) → không có gì để chụp, bỏ qua frame này thay vì gửi rác.
+        val bubbleBounds = VietmapAccessibilityService.bubbleBoundsInScreen
+        if (bubbleBounds == null) {
+            noBubbleCounter++
+            if (noBubbleCounter % 40 == 1) {
+                Log.w(TAG, "Chưa tìm thấy bong bóng VietMap Live (đã bật Accessibility Service + overlay permission chưa?)")
+            }
+            val stale = reader.acquireLatestImage()
+            stale?.close()
+            return
+        }
+
         val image: Image? = reader.acquireLatestImage()
         if (image == null) {
             nullImageCounter++
@@ -225,11 +241,20 @@ class MapStreamManager(
         }
 
         try {
-            val jpegBytes = imageToJpeg(image)
-            if (jpegBytes != null && jpegBytes.size > 100) {
+            val jpegBytes = imageToJpeg(image, bubbleBounds)
+            if (jpegBytes != null && jpegBytes.size > 50) {
                 frameCounter++
-                if (frameCounter % 5 == 1) {
-                    Log.i(TAG, "📷 Frame #$frameCounter: ${jpegBytes.size} bytes → BLE")
+                if (frameCounter % 20 == 1) {
+                    Log.i(TAG, "📷 Bubble frame #$frameCounter: ${jpegBytes.size} bytes → BLE")
+                }
+                if (frameCounter == 3) {
+                    try {
+                        val f = java.io.File(context.getExternalFilesDir(null), "bubble_debug.jpg")
+                        java.io.FileOutputStream(f).use { it.write(jpegBytes) }
+                        Log.i(TAG, "Debug: saved bubble frame to ${f.absolutePath}")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Debug save failed: ${e.message}")
+                    }
                 }
                 // Send on streaming thread to avoid blocking capture
                 streamingHandler?.post {
@@ -241,103 +266,66 @@ class MapStreamManager(
         }
     }
 
-    private fun imageToJpeg(image: Image): ByteArray? {
+    private fun imageToJpeg(image: Image, bubbleBoundsInScreen: android.graphics.Rect): ByteArray? {
         val plane = image.planes[0]
         val buffer = plane.buffer
         val pixelStride = plane.pixelStride
         val rowStride = plane.rowStride
         val rowPadding = rowStride - pixelStride * image.width
 
-        // Create full-screen bitmap from Image
+        // Full-screen bitmap từ Image (kèm padding stride của ImageReader).
         val fullWidth = image.width + rowPadding / pixelStride
         val fullBitmap = Bitmap.createBitmap(fullWidth, image.height, Bitmap.Config.ARGB_8888)
         fullBitmap.copyPixelsFromBuffer(buffer)
 
-        // Crop vùng map: bỏ status bar trên (~10%) và bottom nav/instruction (~25%)
-        // Google Maps: map ở giữa, instruction card ở dưới, search bar trên.
-        // Lấy vùng trung tâm hình vuông (vùng map thuần).
-        val srcW = image.width
-        val srcH = image.height
-        val cropTop = (srcH * 0.12f).toInt()      // bỏ 12% trên (search/status)
-        val cropBottom = (srcH * 0.28f).toInt()   // bỏ 28% dưới (instruction card)
-        val cropH = srcH - cropTop - cropBottom
-        val cropSize = minOf(srcW, cropH)         // hình vuông
-        val cropX = (srcW - cropSize) / 2
-        val cropY = cropTop + (cropH - cropSize) / 2
+        // Crop đúng vùng bong bóng, kẹp trong biên ảnh thật (đề phòng bong
+        // bóng vừa bị kéo ra sát mép/ngoài màn hình lúc chụp).
+        val left = bubbleBoundsInScreen.left.coerceIn(0, image.width - 1)
+        val top = bubbleBoundsInScreen.top.coerceIn(0, image.height - 1)
+        val right = bubbleBoundsInScreen.right.coerceIn(left + 1, image.width)
+        val bottom = bubbleBoundsInScreen.bottom.coerceIn(top + 1, image.height)
 
-        val mapRegion = try {
-            Bitmap.createBitmap(
-                fullBitmap,
-                cropX.coerceAtLeast(0),
-                cropY.coerceAtLeast(0),
-                cropSize.coerceAtMost(fullWidth - cropX),
-                cropSize.coerceAtMost(srcH - cropY)
-            )
+        val bubbleBitmap = try {
+            Bitmap.createBitmap(fullBitmap, left, top, right - left, bottom - top)
         } catch (e: Exception) {
-            fullBitmap
+            Log.e(TAG, "Crop bubble thất bại: ${e.message}")
+            fullBitmap.recycle()
+            return null
         }
-
-        // Scale xuống 240x240
-        val scaled = Bitmap.createScaledBitmap(mapRegion, CAPTURE_WIDTH, CAPTURE_HEIGHT, true)
-
-        // Apply simplify filter nếu bật
-        val finalBitmap = if (simplifyMode) simplifyMapColors(scaled) else scaled
-
-        // Compress to JPEG
-        val outputStream = ByteArrayOutputStream(8192)
-        finalBitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, outputStream)
-
-        // Clean up
-        if (mapRegion !== fullBitmap) mapRegion.recycle()
-        if (scaled !== finalBitmap) scaled.recycle()
-        if (finalBitmap !== scaled) finalBitmap.recycle()
         fullBitmap.recycle()
+
+        // Scale "contain" giữ nguyên tỷ lệ (không méo hình) vào khung vuông
+        // của board, letterbox nền đen phần thừa — cùng cách đã dùng cho
+        // luồng map trước đó (CarHostForegroundService.letterboxToSquare).
+        val scale = minOf(
+            BOARD_WIDTH.toFloat() / bubbleBitmap.width,
+            BOARD_HEIGHT.toFloat() / bubbleBitmap.height,
+        )
+        val scaledW = (bubbleBitmap.width * scale).toInt().coerceAtLeast(1)
+        val scaledH = (bubbleBitmap.height * scale).toInt().coerceAtLeast(1)
+
+        val out = Bitmap.createBitmap(BOARD_WIDTH, BOARD_HEIGHT, Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(out)
+        canvas.drawColor(android.graphics.Color.BLACK)
+        val scaledBitmap = Bitmap.createScaledBitmap(bubbleBitmap, scaledW, scaledH, true)
+        bubbleBitmap.recycle()
+        val dstLeft = (BOARD_WIDTH - scaledW) / 2f
+        val dstTop = (BOARD_HEIGHT - scaledH) / 2f
+        canvas.drawBitmap(scaledBitmap, dstLeft, dstTop, null)
+        scaledBitmap.recycle()
+
+        val outputStream = ByteArrayOutputStream(8192)
+        out.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, outputStream)
+        out.recycle()
 
         return outputStream.toByteArray()
     }
 
-    /**
-     * Đơn giản hóa màu bản đồ: giữ đường (xanh navigation, xám/trắng đường),
-     * làm nền đen, bỏ text/label để rõ tuyến đường + nén JPEG tốt hơn.
-     */
-    private fun simplifyMapColors(src: Bitmap): Bitmap {
-        val w = src.width
-        val h = src.height
-        val pixels = IntArray(w * h)
-        src.getPixels(pixels, 0, w, 0, 0, w, h)
-
-        for (i in pixels.indices) {
-            val p = pixels[i]
-            val r = (p shr 16) and 0xFF
-            val g = (p shr 8) and 0xFF
-            val b = p and 0xFF
-
-            val isNavBlue = (b > 150 && b > r + 30 && b > g + 10)        // tuyến đường xanh
-            val isWhiteRoad = (r > 200 && g > 200 && b > 200)            // đường trắng
-            val isGrayRoad = (kotlin.math.abs(r - g) < 25 &&
-                              kotlin.math.abs(g - b) < 25 &&
-                              r in 150..230)                              // đường xám
-            val isYellowRoad = (r > 200 && g > 180 && b < 140)          // đường vàng (cao tốc)
-
-            pixels[i] = when {
-                isNavBlue -> 0xFF33BBFF.toInt()      // xanh sáng cho tuyến navigation
-                isYellowRoad -> 0xFFFFCC33.toInt()   // vàng cho cao tốc
-                isWhiteRoad -> 0xFFFFFFFF.toInt()    // trắng cho đường chính
-                isGrayRoad -> 0xFF888888.toInt()     // xám cho đường phụ
-                else -> 0xFF101510.toInt()           // nền tối (hơi xanh đen)
-            }
-        }
-
-        val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        result.setPixels(pixels, 0, w, 0, 0, w, h)
-        return result
-    }
-
     private fun sendFrameOverBle(jpegBytes: ByteArray) {
         if (!isStreaming) return
+        if (!imageRelay.isConnected) return
 
-        // Use BleManager's sendJpegFrame which handles chunking
-        bleManager.sendJpegFrame(jpegBytes)
+        imageRelay.sendJpegFrame(jpegBytes)
 
         // Inter-frame delay for ESP32 decode time
         try {

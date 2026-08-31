@@ -196,6 +196,12 @@ class BleManager(private val context: Context) {
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
+            // scanner có thể báo cùng 1 device nhiều lần (nhiều gói advertise)
+            // TRƯỚC khi stopScan() thực sự có hiệu lực (async) — không guard
+            // sẽ spawn nhiều connectGatt() đồng thời tới cùng 1 địa chỉ, gây
+            // cạn tài nguyên BLE của hệ thống.
+            val state = _bleState.value.connectionState
+            if (state == BleConnectionState.CONNECTING || state == BleConnectionState.CONNECTED) return
             stopScan()
             connectToDevice(result.device)
         }

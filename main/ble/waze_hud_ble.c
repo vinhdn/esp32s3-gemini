@@ -668,6 +668,13 @@ static int gap_event(struct ble_gap_event *event, void *arg)
         } else {
             s_conn_handle = event->connect.conn_handle;
             ESP_LOGI(TAG, "Dien thoai da ket noi BLE (conn_handle=%u)", s_conn_handle);
+            // Tiep tuc advertise ngay ca sau khi connect thanh cong: cho phep
+            // mot central thu hai (vd host rieng gui anh JPEG cho img_stream)
+            // ket noi song song, dua tren CONFIG_BT_NIMBLE_MAX_CONNECTIONS=3.
+            // Truoc day chi advertise lai khi connect that bai nen sau ket
+            // noi dau tien, thiet bi bien mat khoi ket qua scan cua central
+            // thu hai.
+            start_advertise();
         }
         return 0;
     case BLE_GAP_EVENT_DISCONNECT:

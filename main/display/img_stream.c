@@ -47,12 +47,28 @@ static SemaphoreHandle_t s_assembly_mutex;  // protects s_assembly from BLE + ta
 static uint8_t *s_decode_buf;               // PSRAM buffer for decode input
 static uint32_t s_decode_size;              // size of JPEG in decode buffer
 static volatile bool s_frame_ready;         // signal to decode task
+// true trong SUOT qua trinh decode_task doc s_decode_buf (jd_prepare..jd_decomp),
+// khong chi luc cho duoc pick up. Thieu co nay truoc day gay race: BLE task co
+// the memcpy de len s_decode_buf NGAY TRONG LUC decode_task dang doc no (vi
+// s_frame_ready da bi set false tu dau vong lap, truoc khi decode xong), lam
+// frame dang giai ma bi rach/hong hinh. Chap nhan mat frame (theo yeu cau) thay
+// vi de bi race: frame moi den luc dang decode se bi bo qua o img_stream_feed_chunk().
+static volatile bool s_decoding;
 
 static TaskHandle_t s_decode_task;
 
 // LVGL canvas and buffer
 static lv_obj_t *s_canvas;
 static uint8_t *s_canvas_buf;              // PSRAM RGB565 buffer (240*240*2 = 115200 bytes)
+
+// Label "Loading..." hien khi chua nhan duoc frame bong bong nao - an vinh
+// vien sau frame dau tien giai ma thanh cong.
+static lv_obj_t *s_loading_label;
+static bool s_first_frame_shown;
+
+// Cham nho goc tren-phai bao trang thai ket noi BLE - dau hieu ket noi toi
+// thieu sau khi da xoa toan bo UI toc do (xem app_main.c/ui_screens.c).
+static lv_obj_t *s_conn_dot;
 
 static void *s_tjpgd_work;                 // PSRAM workspace for tjpgd
 
@@ -81,6 +97,14 @@ static UINT jpeg_input_func(JDEC *jd, BYTE *buff, UINT ndata)
     return ndata;
 }
 
+// Vi tri dat anh da giai ma len canvas 240x240 - anh Android gui gio la
+// ty le that (vd 16:9, KHONG con bi Android tu dem vien den cho vua khung
+// vuong nhu truoc). Tinh lai truoc moi lan jd_decomp() trong decode_task().
+// Neo duoi + can giua ngang de anh nam duoi vung 2 vong tron speed (y~42-154)
+// thay vi bi che gan het nhu khi dat giua man hinh.
+static int16_t s_dst_x;
+static int16_t s_dst_y;
+
 // Output function: converts RGB888 -> RGB565 and writes to canvas buffer
 static UINT jpeg_output_func(JDEC *jd, void *bitmap, JRECT *rect)
 {
@@ -88,25 +112,26 @@ static UINT jpeg_output_func(JDEC *jd, void *bitmap, JRECT *rect)
     uint8_t *rgb888 = (uint8_t *)bitmap;
     uint16_t *canvas_pixels = (uint16_t *)s_canvas_buf;
 
-    uint16_t left = rect->left;
-    uint16_t top = rect->top;
-    uint16_t right = rect->right;
-    uint16_t bottom = rect->bottom;
-
-    // Clip to canvas bounds
-    if (right >= IMG_WIDTH) right = IMG_WIDTH - 1;
-    if (bottom >= IMG_HEIGHT) bottom = IMG_HEIGHT - 1;
-
-    for (uint16_t y = top; y <= bottom; y++) {
-        for (uint16_t x = left; x <= right; x++) {
+    for (uint16_t sy = rect->top; sy <= rect->bottom; sy++) {
+        int dy = (int)sy + s_dst_y;
+        if (dy < 0 || dy >= IMG_HEIGHT) {
+            rgb888 += 3 * (rect->right - rect->left + 1);
+            continue;
+        }
+        for (uint16_t sx = rect->left; sx <= rect->right; sx++) {
             // RGB888 source pixel
             uint8_t r = *rgb888++;
             uint8_t g = *rgb888++;
             uint8_t b = *rgb888++;
 
+            int dx = (int)sx + s_dst_x;
+            if (dx < 0 || dx >= IMG_WIDTH) {
+                continue;
+            }
+
             // Convert to RGB565
             uint16_t pixel = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
-            canvas_pixels[y * IMG_WIDTH + x] = pixel;
+            canvas_pixels[dy * IMG_WIDTH + dx] = pixel;
         }
     }
 
@@ -129,9 +154,11 @@ static void decode_task(void *arg)
             continue;
         }
         s_frame_ready = false;
+        s_decoding = true;
 
         uint32_t size = s_decode_size;
         if (size == 0) {
+            s_decoding = false;
             continue;
         }
 
@@ -147,6 +174,7 @@ static void decode_task(void *arg)
                                   IMG_DECODE_WORK_SIZE, &io);
         if (res != JDR_OK) {
             ESP_LOGW(TAG, "jd_prepare loi: %d (JPEG co the bi loi/khong ho tro)", res);
+            s_decoding = false;
             continue;
         }
 
@@ -169,18 +197,36 @@ static void decode_task(void *arg)
             }
         }
 
+        // Anh (bitmap bong bong ghep tu Android) khong con phai ne 2 vong
+        // tron speed nua (da xoa UI toc do) - can giua ca ngang lan doc.
+        // Xoa canvas ve den truoc de khong dinh anh frame truoc (vi tri/kich
+        // thuoc co the doi giua cac frame).
+        s_dst_x = (int16_t)((IMG_WIDTH - (int)w) / 2);
+        s_dst_y = (int16_t)((IMG_HEIGHT - (int)h) / 2);
+        if (s_dst_x < 0) s_dst_x = 0;
+        if (s_dst_y < 0) s_dst_y = 0;
+        memset(s_canvas_buf, 0, (size_t)IMG_WIDTH * IMG_HEIGHT * sizeof(uint16_t));
+
         // Decompress with output callback
         res = jd_decomp(&jdec, jpeg_output_func, scale);
+        // Từ đây trở đi không còn đọc s_decode_buf nữa - cho phép frame mới
+        // ghi đè ngay cả khi phần hiển thị (LVGL invalidate) bên dưới còn chạy.
+        s_decoding = false;
         if (res != JDR_OK) {
             ESP_LOGW(TAG, "jd_decomp loi: %d", res);
             continue;
         }
 
-        // Invalidate LVGL canvas so it redraws
+        // Invalidate LVGL canvas so it redraws, và ẩn vĩnh viễn label
+        // "Loading..." sau khung hình đầu tiên hiển thị thành công.
         if (lvgl_port_lock(100)) {
-            lv_obj_clear_flag(s_canvas, LV_OBJ_FLAG_HIDDEN); // hiện canvas map
-            lv_obj_move_foreground(s_canvas);                // đưa lên trên cùng
             lv_obj_invalidate(s_canvas);
+            if (!s_first_frame_shown) {
+                s_first_frame_shown = true;
+                if (s_loading_label) {
+                    lv_obj_add_flag(s_loading_label, LV_OBJ_FLAG_HIDDEN);
+                }
+            }
             lvgl_port_unlock();
         }
 
@@ -235,8 +281,14 @@ void img_stream_feed_chunk(const uint8_t *data, uint16_t len)
 
         // Detect EOI marker: 0xFF 0xD9 → kết thúc frame
         if (s_assembly.prev_byte == 0xFF && b == 0xD9) {
-            // Frame hoàn chỉnh → copy sang decode buffer
-            if (s_frame_ready == false && s_assembly.total_size > 100) {
+            // Frame hoàn chỉnh → copy sang decode buffer, NHƯNG chỉ khi
+            // decode_task không đang đọc s_decode_buf (s_decoding) và không
+            // có frame khác đang chờ pick up (s_frame_ready). Nếu board đang
+            // bận giải mã frame trước, bỏ qua frame này luôn (chấp nhận mất
+            // frame) thay vì memcpy đè lên buffer đang được đọc — trước đây
+            // thiếu check s_decoding nên có thể ghi đè GIỮA LÚC decode_task
+            // đang đọc, làm ảnh bị rách/hỏng.
+            if (!s_frame_ready && !s_decoding && s_assembly.total_size > 100) {
                 memcpy(s_decode_buf, s_assembly.jpeg_buf, s_assembly.total_size);
                 s_decode_size = s_assembly.total_size;
                 s_frame_ready = true;
@@ -297,16 +349,34 @@ esp_err_t img_stream_init(lv_obj_t *parent)
         return ESP_ERR_NO_MEM;
     }
 
-    // Create LVGL canvas object
+    // Create LVGL canvas object. Khong con UI toc do de len tren nua - canvas
+    // (+ label loading) la NOI DUNG DUY NHAT tren man hinh.
     if (lvgl_port_lock(200)) {
         s_canvas = lv_canvas_create(parent);
         lv_canvas_set_buffer(s_canvas, s_canvas_buf, IMG_WIDTH, IMG_HEIGHT,
                              LV_COLOR_FORMAT_RGB565);
         lv_obj_center(s_canvas);
-        // Start hidden - caller can show when needed
-        lv_obj_add_flag(s_canvas, LV_OBJ_FLAG_HIDDEN);
-        // Fill with black initially
+        // Fill with black initially - luon hien, khong con toggle full-screen
         lv_canvas_fill_bg(s_canvas, lv_color_black(), LV_OPA_COVER);
+
+        // Label "Loading..." - tao SAU canvas nen mac dinh nam tren, an sau
+        // khi nhan duoc frame bong bong dau tien (xem decode_task()).
+        s_loading_label = lv_label_create(parent);
+        lv_obj_set_style_text_color(s_loading_label, lv_color_white(), 0);
+        lv_label_set_text(s_loading_label, "Loading...");
+        lv_obj_center(s_loading_label);
+
+        // Cham trang thai ket noi BLE - goc tren-phai, nho (10x10) de khong
+        // che anh bong bong. Do mac dinh (chua ket noi) den khi
+        // img_stream_set_connected(true) duoc goi.
+        s_conn_dot = lv_obj_create(parent);
+        lv_obj_remove_style_all(s_conn_dot);
+        lv_obj_set_size(s_conn_dot, 10, 10);
+        lv_obj_set_style_radius(s_conn_dot, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(s_conn_dot, lv_color_hex(0xE02020), 0);
+        lv_obj_set_style_bg_opa(s_conn_dot, LV_OPA_COVER, 0);
+        lv_obj_align(s_conn_dot, LV_ALIGN_TOP_RIGHT, -4, 4);
+
         lvgl_port_unlock();
     } else {
         ESP_LOGE(TAG, "Khong lock duoc LVGL de tao canvas");
@@ -348,4 +418,16 @@ void img_stream_show(bool visible)
 bool img_stream_is_ready(void)
 {
     return s_initialized;
+}
+
+void img_stream_set_connected(bool connected)
+{
+    if (!s_initialized || !s_conn_dot) {
+        return;
+    }
+    if (lvgl_port_lock(100)) {
+        lv_obj_set_style_bg_color(s_conn_dot,
+            connected ? lv_color_hex(0x33CC66) : lv_color_hex(0xE02020), 0);
+        lvgl_port_unlock();
+    }
 }

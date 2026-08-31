@@ -60,6 +60,12 @@ dependencies {
     implementation(libs.gson)
     debugImplementation(libs.androidx.ui.tooling)
 
+    // Car App Library — dùng để tự host androidx.car.app.CarAppService của
+    // VietMap Live (bind trực tiếp, không qua Android Auto/DHU thật) và lấy
+    // Surface render ra làm bitmap. Phải khớp version VietMap 3.3.4 bundle
+    // (xem META-INF/androidx.car.app_app.version trong APK đã decompile).
+    implementation("androidx.car.app:app:1.4.0")
+
     // Android Car API - provided by the system on Android Automotive OS
     // Compile-only: the actual implementation is on the device
     // UNCOMMENT sau khi pull android.car.jar từ thiết bị:

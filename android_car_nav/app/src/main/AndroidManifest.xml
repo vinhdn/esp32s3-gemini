@@ -32,10 +32,17 @@
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
     <uses-feature android:name="android.hardware.type.automotive" android:required="false" />
 
+    <!-- Package visibility (Android 11+): cần thấy vn.vietmap.live để
+         bindService vào CarAppService của nó (self-host androidx.car.app). -->
+    <queries>
+        <package android:name="vn.vietmap.live" />
+    </queries>
+
     <application
         android:name=".CarNavApplication"
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="Car Nav BLE"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
@@ -83,6 +90,11 @@
         <service
             android:name=".service.LogcatReaderService"
             android:exported="false" />
+
+        <service
+            android:name=".carhost.CarHostForegroundService"
+            android:exported="true"
+            android:foregroundServiceType="connectedDevice" />
 
         <service
             android:name=".service.VietmapAccessibilityService"
