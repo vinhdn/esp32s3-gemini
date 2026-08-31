@@ -97,15 +97,21 @@ static UINT jpeg_input_func(JDEC *jd, BYTE *buff, UINT ndata)
     return ndata;
 }
 
-// Vi tri dat anh da giai ma len canvas 240x240 - anh Android gui gio la
-// ty le that (vd 16:9, KHONG con bi Android tu dem vien den cho vua khung
-// vuong nhu truoc). Tinh lai truoc moi lan jd_decomp() trong decode_task().
-// Neo duoi + can giua ngang de anh nam duoi vung 2 vong tron speed (y~42-154)
-// thay vi bi che gan het nhu khi dat giua man hinh.
+// Vi tri + he so scale de dat anh da giai ma len canvas 240x240. Anh Android
+// gui gio nho hon canvas (144px, giam de board giai ma nhanh hon - xem
+// VietmapAccessibilityService.kt) nen phai PHONG TO khi ve de luon khop du
+// chieu rong man hinh, khong con hien nho o giua nhu truoc. tjpgd chi ho tro
+// scale-DOWN luc decode (tham so scale cua jd_decomp: 0/1/2/3), nen phong to
+// duoc lam thu cong ngay trong jpeg_output_func (nearest-neighbor: 1 pixel
+// nguon -> 1 khoi pixel dich). Tinh lai truoc moi lan jd_decomp() trong
+// decode_task().
 static int16_t s_dst_x;
 static int16_t s_dst_y;
+static float s_scale_x = 1.0f;
+static float s_scale_y = 1.0f;
 
-// Output function: converts RGB888 -> RGB565 and writes to canvas buffer
+// Output function: converts RGB888 -> RGB565, phong to (nearest-neighbor)
+// va ghi vao canvas buffer theo s_scale_x/s_scale_y.
 static UINT jpeg_output_func(JDEC *jd, void *bitmap, JRECT *rect)
 {
     (void)jd;
@@ -113,25 +119,31 @@ static UINT jpeg_output_func(JDEC *jd, void *bitmap, JRECT *rect)
     uint16_t *canvas_pixels = (uint16_t *)s_canvas_buf;
 
     for (uint16_t sy = rect->top; sy <= rect->bottom; sy++) {
-        int dy = (int)sy + s_dst_y;
-        if (dy < 0 || dy >= IMG_HEIGHT) {
-            rgb888 += 3 * (rect->right - rect->left + 1);
-            continue;
-        }
+        int dyStart = s_dst_y + (int)(sy * s_scale_y);
+        int dyEnd = s_dst_y + (int)((sy + 1) * s_scale_y);
+        if (dyEnd <= dyStart) dyEnd = dyStart + 1;
+
         for (uint16_t sx = rect->left; sx <= rect->right; sx++) {
             // RGB888 source pixel
             uint8_t r = *rgb888++;
             uint8_t g = *rgb888++;
             uint8_t b = *rgb888++;
 
-            int dx = (int)sx + s_dst_x;
-            if (dx < 0 || dx >= IMG_WIDTH) {
-                continue;
-            }
+            int dxStart = s_dst_x + (int)(sx * s_scale_x);
+            int dxEnd = s_dst_x + (int)((sx + 1) * s_scale_x);
+            if (dxEnd <= dxStart) dxEnd = dxStart + 1;
 
             // Convert to RGB565
             uint16_t pixel = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
-            canvas_pixels[dy * IMG_WIDTH + dx] = pixel;
+
+            for (int dy = dyStart; dy < dyEnd; dy++) {
+                if (dy < 0 || dy >= IMG_HEIGHT) continue;
+                uint16_t *row = canvas_pixels + (size_t)dy * IMG_WIDTH;
+                for (int dx = dxStart; dx < dxEnd; dx++) {
+                    if (dx < 0 || dx >= IMG_WIDTH) continue;
+                    row[dx] = pixel;
+                }
+            }
         }
     }
 
@@ -197,14 +209,25 @@ static void decode_task(void *arg)
             }
         }
 
-        // Anh (bitmap bong bong ghep tu Android) khong con phai ne 2 vong
-        // tron speed nua (da xoa UI toc do) - can giua ca ngang lan doc.
+        // Anh Android gui nho hon canvas (144px, xem ghi chu o
+        // jpeg_output_func) - phong to de LUON KHOP DU CHIEU RONG man hinh
+        // (yeu cau: "hien thi full screen match width"), giu nguyen ty le,
+        // can giua theo chieu doc. Neu ty le anh cao bat thuong khien phong
+        // theo chieu rong bi tran chieu cao canvas, gioi han lai theo chieu
+        // cao de khong ve ra ngoai (hiem gap voi bong bong, von ngang).
+        s_scale_x = (float)IMG_WIDTH / (float)w;
+        s_scale_y = s_scale_x;
+        int scaledH = (int)((float)h * s_scale_y + 0.5f);
+        if (scaledH > IMG_HEIGHT) {
+            s_scale_y = (float)IMG_HEIGHT / (float)h;
+            s_scale_x = s_scale_y;
+            scaledH = IMG_HEIGHT;
+        }
+        s_dst_x = 0;
+        s_dst_y = (int16_t)((IMG_HEIGHT - scaledH) / 2);
+        if (s_dst_y < 0) s_dst_y = 0;
         // Xoa canvas ve den truoc de khong dinh anh frame truoc (vi tri/kich
         // thuoc co the doi giua cac frame).
-        s_dst_x = (int16_t)((IMG_WIDTH - (int)w) / 2);
-        s_dst_y = (int16_t)((IMG_HEIGHT - (int)h) / 2);
-        if (s_dst_x < 0) s_dst_x = 0;
-        if (s_dst_y < 0) s_dst_y = 0;
         memset(s_canvas_buf, 0, (size_t)IMG_WIDTH * IMG_HEIGHT * sizeof(uint16_t));
 
         // Decompress with output callback
