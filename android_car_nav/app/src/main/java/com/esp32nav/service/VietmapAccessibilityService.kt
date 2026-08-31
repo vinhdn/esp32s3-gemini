@@ -636,22 +636,29 @@ class VietmapAccessibilityService : AccessibilityService() {
 
     private var lastVmsxCurrentSpeed = Int.MIN_VALUE
     private var lastVmsxSpeedLimit = Int.MIN_VALUE
-    private var lastVmsxAlertLimit = Int.MIN_VALUE
-    private var lastVmsxAlertDistance = Int.MIN_VALUE
+    private var lastVmsxNextLimit = Int.MIN_VALUE
+    private var lastVmsxNextLimitDistance = Int.MIN_VALUE
+    private var lastVmsxCameraDistance = Int.MIN_VALUE
 
     /**
-     * Đọc 4 giá trị trên bong bóng — dùng làm tín hiệu "có đổi hay không" để
-     * quyết định gửi ảnh NGAY, thay vì gate cứng bỏ lỡ thay đổi (vấn đề
-     * trước) hoặc gửi vô điều kiện mỗi lần scan (làm board không xử lý kịp,
-     * theo phản hồi thực tế). Nếu không đổi, vẫn gửi 1 lần/giây (heartbeat)
-     * để không bỏ lỡ thay đổi hình ảnh thuần túy (icon/màu) mà 4 giá trị này
-     * không phản ánh được.
+     * Bong bóng có 2 khu cảnh báo ĐỘC LẬP — xác nhận qua dump thật trên
+     * thiết bị (kiểu bong bóng "sq_", cùng lúc trái=186m phải=365m):
+     *   sq_upcoming_alert_left  -> biển báo tốc độ sắp tới (khoảng cách riêng)
+     *   sq_upcoming_alert_right -> camera (khoảng cách riêng)
+     * (kiểu bong bóng cũ hơn "h_" chỉ có 1 bên, id "warning_placeholder_id"/
+     * "place_holder_textView" thay vì "warning_alert_image" — tương đương
+     * bên trái, không có bên phải/camera).
+     * Cả 2 bên dùng CHUNG id lá "warning_speed_distance_text_view" nên phải
+     * theo dõi node cha (..._upcoming_alert_left/right) để phân biệt, không
+     * thể chỉ so khớp theo id lá như trước (làm mất dữ liệu 1 bên — bên sau
+     * duyệt cây sẽ ghi đè bên trước).
      */
     private fun parseBubbleWidget(window: AccessibilityWindowInfo, root: AccessibilityNodeInfo) {
         var currentSpeedText: String? = null
         var speedLimitText: String? = null
         var nextLimitText: String? = null
-        var alertDistanceText: String? = null
+        var nextLimitDistanceText: String? = null
+        var cameraDistanceText: String? = null
 
         // root.refresh() TRƯỚC khi duyệt: khi VietMap Live ở BACKGROUND (chỉ
         // còn bong bóng), AccessibilityNodeInfo trả về từ getWindows()/
@@ -666,9 +673,15 @@ class VietmapAccessibilityService : AccessibilityService() {
         } catch (_: Exception) {
         }
 
-        fun visit(node: AccessibilityNodeInfo) {
+        // side: 0 = ngoài 2 khu cảnh báo, 1 = đang ở nhánh "..._left", 2 = "..._right"
+        fun visit(node: AccessibilityNodeInfo, side: Int) {
             val id = node.viewIdResourceName
+            var childSide = side
             if (id != null) {
+                when {
+                    id.endsWith("upcoming_alert_left") -> childSide = 1
+                    id.endsWith("upcoming_alert_right") -> childSide = 2
+                }
                 when {
                     id.endsWith("current_speed_textview") -> {
                         try { node.refresh() } catch (_: Exception) {}
@@ -679,38 +692,48 @@ class VietmapAccessibilityService : AccessibilityService() {
                         speedLimitText = node.text?.toString()
                     }
                     id.endsWith("place_holder_textView") -> {
+                        // Kiểu bong bóng "h_" cũ: số biển báo sắp tới đọc
+                        // được trực tiếp (kiểu "sq_" mới không có, chỉ có icon).
                         try { node.refresh() } catch (_: Exception) {}
                         nextLimitText = node.text?.toString()
                     }
                     id.endsWith("warning_speed_distance_text_view") -> {
                         try { node.refresh() } catch (_: Exception) {}
-                        alertDistanceText = node.text?.toString()
+                        val text = node.text?.toString()
+                        when (side) {
+                            1 -> nextLimitDistanceText = text
+                            2 -> cameraDistanceText = text
+                            // Kiểu "h_" cũ không bọc trong left/right riêng -
+                            // coi như thuộc bên trái (biển báo sắp tới).
+                            else -> nextLimitDistanceText = text
+                        }
                     }
                 }
             }
             for (i in 0 until node.childCount) {
                 val child = node.getChild(i) ?: continue
                 try {
-                    visit(child)
+                    visit(child, childSide)
                 } finally {
                     child.recycle()
                 }
             }
         }
-        visit(root)
+        visit(root, 0)
 
         // Không tìm thấy node nào → không phải window bong bóng (vd window
         // app chính full-screen), bỏ qua.
         if (currentSpeedText == null && speedLimitText == null &&
-            nextLimitText == null && alertDistanceText == null
+            nextLimitText == null && nextLimitDistanceText == null && cameraDistanceText == null
         ) {
             return
         }
 
         val parsedSpeed = currentSpeedText?.trim()?.toIntOrNull() ?: -1
         val speedLimit = speedLimitText?.trim()?.let { if (it == "!") 0 else it.toIntOrNull() } ?: 0
-        val alertLimit = nextLimitText?.trim()?.let { if (it == "--") 0 else it.toIntOrNull() } ?: 0
-        val alertDistance = parseDistanceMeters(alertDistanceText)
+        val nextLimit = nextLimitText?.trim()?.let { if (it == "--") 0 else it.toIntOrNull() } ?: 0
+        val nextLimitDistance = parseDistanceMeters(nextLimitDistanceText)
+        val cameraDistance = parseDistanceMeters(cameraDistanceText)
 
         // currentSpeedLimit/currentSpeed vẫn cập nhật cho UI trong app (xem
         // MainScreen) — không còn dùng để gửi VMSX qua board nữa.
@@ -720,11 +743,13 @@ class VietmapAccessibilityService : AccessibilityService() {
         isNavigating = true
 
         val changed = parsedSpeed != lastVmsxCurrentSpeed || speedLimit != lastVmsxSpeedLimit ||
-            alertLimit != lastVmsxAlertLimit || alertDistance != lastVmsxAlertDistance
+            nextLimit != lastVmsxNextLimit || nextLimitDistance != lastVmsxNextLimitDistance ||
+            cameraDistance != lastVmsxCameraDistance
         lastVmsxCurrentSpeed = parsedSpeed
         lastVmsxSpeedLimit = speedLimit
-        lastVmsxAlertLimit = alertLimit
-        lastVmsxAlertDistance = alertDistance
+        lastVmsxNextLimit = nextLimit
+        lastVmsxNextLimitDistance = nextLimitDistance
+        lastVmsxCameraDistance = cameraDistance
 
         val heartbeatDue = System.currentTimeMillis() - lastScreenshotAt >= heartbeatIntervalMs
         if (changed || heartbeatDue) {
@@ -735,7 +760,7 @@ class VietmapAccessibilityService : AccessibilityService() {
             // on_nav_data nối lại vào ui_screens.c). Bật lại bằng cách bỏ
             // comment dòng dưới (và có thể bỏ dòng sendVmsxData ở trên).
             // captureAndSendBubbleImage(window.id)
-            sendVmsxData(parsedSpeed, speedLimit, alertLimit, alertDistance)
+            sendVmsxData(parsedSpeed, speedLimit, nextLimit, nextLimitDistance, cameraDistance)
         }
     }
 
@@ -743,22 +768,31 @@ class VietmapAccessibilityService : AccessibilityService() {
      * Gửi 4 giá trị đọc được từ bong bóng dưới dạng frame VMSX (đúng định
      * dạng VmslRelay.smali/waze_hud_ble.c đã dùng) — board dùng lại UI số
      * liệu sẵn có (ui_screens.c) để hiển thị, không cần giải mã JPEG.
-     *  - speedLimit   : biển báo tốc độ hiện tại (currentSpeedLimit ở trên)
-     *  - currentSpeed : tốc độ hiện tại
-     *  - alertLimit   : biển báo tốc độ SẮP TỚI (next limit)
-     *  - alertDistanceMeters : khoảng cách tới cảnh báo đó (vd tới camera)
+     *  - speedLimit          : biển báo tốc độ hiện tại (currentSpeedLimit ở trên)
+     *  - currentSpeed        : tốc độ hiện tại
+     *  - nextLimit           : biển báo tốc độ SẮP TỚI (chỉ có ở kiểu bong bóng "h_" cũ)
+     *  - nextLimitDistanceM  : khoảng cách tới biển báo sắp tới đó
+     *  - cameraDistanceM     : khoảng cách tới camera (khu cảnh báo bên PHẢI, độc lập)
      */
-    private fun sendVmsxData(currentSpeed: Int, speedLimit: Int, alertLimit: Int, alertDistanceMeters: Int) {
+    private fun sendVmsxData(
+        currentSpeed: Int,
+        speedLimit: Int,
+        nextLimit: Int,
+        nextLimitDistanceM: Int,
+        cameraDistanceM: Int,
+    ) {
         val app = application as? CarNavApplication ?: return
         val frame = VmsxFrame.build(
             speedLimit = speedLimit,
             currentSpeed = currentSpeed.coerceAtLeast(0),
-            alertDistanceMeters = alertDistanceMeters,
-            alertSpeedLimit = alertLimit,
+            nextLimitDistanceMeters = nextLimitDistanceM,
+            nextLimitSpeedLimit = nextLimit,
+            cameraDistanceMeters = cameraDistanceM,
             overSpeed = speedLimit > 0 && currentSpeed > speedLimit,
             hudConnected = true,
         )
-        Log.i(TAG, "📊 VMSX gửi: speed=$currentSpeed limit=$speedLimit nextLimit=$alertLimit alertDist=${alertDistanceMeters}m")
+        Log.i(TAG, "📊 VMSX gửi: speed=$currentSpeed limit=$speedLimit nextLimit=$nextLimit " +
+            "nextLimitDist=${nextLimitDistanceM}m cameraDist=${cameraDistanceM}m")
         app.imageRelay.sendRawFrame(frame)
     }
 

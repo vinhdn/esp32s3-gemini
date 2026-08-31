@@ -550,10 +550,10 @@ static void format_distance(char *buf, size_t buf_size, int32_t distance_m)
     }
 }
 
-// next_limit_kmh/alert_distance_m deu tu CUNG 1 canh bao VMSX (wire format
-// chi mang 1 canh bao chung, chua phan biet duoc "sap doi gioi han" voi
-// "camera") - nen khoang cach hien ben duoi 2 vong tron la CUNG 1 gia tri.
-void ui_set_next_alert(int16_t next_limit_kmh, int32_t alert_distance_m)
+// next_limit_kmh/next_limit_distance_m va camera_distance_m la 2 canh bao
+// DOC LAP (bong bong co 2 khu rieng, xac nhan qua dump that: vd trai 186m
+// / phai 365m cung luc) - moi ben hien dung khoang cach cua chinh no.
+void ui_set_next_alert(int16_t next_limit_kmh, int32_t next_limit_distance_m, int32_t camera_distance_m)
 {
     lvgl_port_lock(0);
 
@@ -565,11 +565,11 @@ void ui_set_next_alert(int16_t next_limit_kmh, int32_t alert_distance_m)
         lv_label_set_text(s_ui.next_limit_number, "!");
     }
 
-    format_distance(buf, sizeof(buf), alert_distance_m);
+    format_distance(buf, sizeof(buf), next_limit_distance_m);
     lv_label_set_text(s_ui.next_limit_distance_label, buf);
-    lv_label_set_text(s_ui.camera_distance_label, buf);
 
-    format_distance(buf, sizeof(buf), alert_distance_m);
+    format_distance(buf, sizeof(buf), camera_distance_m);
+    lv_label_set_text(s_ui.camera_distance_label, buf);
     lv_label_set_text(s_ui.camera_number, buf);
 
     lvgl_port_unlock();

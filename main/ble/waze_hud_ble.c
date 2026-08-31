@@ -434,63 +434,74 @@ static int access_cb(uint16_t conn_handle, uint16_t attr_handle,
                 return 0;
             }
 
-            // Frame mo rong "VMSX" (14 byte) tu hook Android Auto:
+            // Frame mo rong "VMSX" v2 (16 byte) tu VietmapAccessibilityService.kt:
             //   0..3  magic "VMSX"
-            //   4     version = 1
+            //   4     version = 2
             //   5     speedLimit (km/h)
             //   6     currentSpeed (km/h)
             //   7     flags: bit0 overSpeed, bit1 underMinSpeedLimit,
-            //               bit2 hudConnected, bit3 alert phia truoc hop le
+            //               bit2 hudConnected, bit3 nextLimit hop le,
+            //               bit4 camera hop le
             //   8     minSpeedLimit (km/h)
             //   9     navigationState
-            //   10-11 khoang cach toi canh bao ke tiep (uint16 big-endian, met)
-            //   12    speedLimit cua canh bao do
-            //   13    XOR(byte 0..12)
+            //   10-11 khoang cach toi bien bao toc do sap toi (uint16 BE, met)
+            //   12    speedLimit cua bien bao sap toi do (0 = khong co so -
+            //         bong bong kieu "sq_" chi co icon, khong lo so qua text)
+            //   13-14 khoang cach toi camera (uint16 BE, met) - khu canh bao
+            //         RIENG (sq_upcoming_alert_right), doc lap voi bien bao
+            //         sap toi ben tren (sq_upcoming_alert_left)
+            //   15    XOR(byte 0..14)
             // Cung khong echo qua 0x1234 nhu VMSL.
             static const uint8_t vmsx_magic[] = { 'V', 'M', 'S', 'X' };
             if (length >= sizeof(vmsx_magic) &&
                 memcmp(s_last_h50_value, vmsx_magic, sizeof(vmsx_magic)) == 0) {
-                if (length != 14) {
-                    ESP_LOGW(TAG, "VMSX bo qua: do dai %u, can 14 byte", (unsigned)length);
+                if (length != 16) {
+                    ESP_LOGW(TAG, "VMSX bo qua: do dai %u, can 16 byte", (unsigned)length);
                     return 0;
                 }
-                if (s_last_h50_value[4] != 1) {
+                if (s_last_h50_value[4] != 2) {
                     ESP_LOGW(TAG, "VMSX bo qua: version %u khong ho tro",
                              (unsigned)s_last_h50_value[4]);
                     return 0;
                 }
 
                 uint8_t checksum = 0;
-                for (size_t i = 0; i < 13; ++i) {
+                for (size_t i = 0; i < 15; ++i) {
                     checksum ^= s_last_h50_value[i];
                 }
-                if (checksum != s_last_h50_value[13]) {
+                if (checksum != s_last_h50_value[15]) {
                     ESP_LOGW(TAG, "VMSX bo qua: checksum nhan=0x%02x tinh=0x%02x",
-                             s_last_h50_value[13], checksum);
+                             s_last_h50_value[15], checksum);
                     return 0;
                 }
 
-                uint16_t limit_kmh   = s_last_h50_value[5];
-                uint16_t speed_kmh   = s_last_h50_value[6];
-                uint8_t  flags       = s_last_h50_value[7];
-                uint16_t min_limit   = s_last_h50_value[8];
-                uint8_t  nav_state   = s_last_h50_value[9];
-                uint16_t alert_dist  = ((uint16_t)s_last_h50_value[10] << 8) |
-                                        (uint16_t)s_last_h50_value[11];
-                uint16_t alert_limit = s_last_h50_value[12];
+                uint16_t limit_kmh          = s_last_h50_value[5];
+                uint16_t speed_kmh          = s_last_h50_value[6];
+                uint8_t  flags              = s_last_h50_value[7];
+                uint16_t min_limit          = s_last_h50_value[8];
+                uint8_t  nav_state          = s_last_h50_value[9];
+                uint16_t next_limit_dist    = ((uint16_t)s_last_h50_value[10] << 8) |
+                                               (uint16_t)s_last_h50_value[11];
+                uint16_t next_limit_kmh     = s_last_h50_value[12];
+                uint16_t camera_dist        = ((uint16_t)s_last_h50_value[13] << 8) |
+                                               (uint16_t)s_last_h50_value[14];
 
-                bool over_speed  = (flags & 0x01) != 0;
-                bool under_min   = (flags & 0x02) != 0;
-                bool hud_linked  = (flags & 0x04) != 0;
-                bool alert_valid = (flags & 0x08) != 0;
+                bool over_speed        = (flags & 0x01) != 0;
+                bool under_min         = (flags & 0x02) != 0;
+                bool hud_linked        = (flags & 0x04) != 0;
+                bool next_limit_valid  = (flags & 0x08) != 0;
+                bool camera_valid      = (flags & 0x10) != 0;
 
                 ESP_LOGI(TAG, "VMSX hop le: limit=%u speed=%u min=%u nav_state=%u "
                               "over=%d under_min=%d hud=%d",
                          limit_kmh, speed_kmh, min_limit, nav_state,
                          (int)over_speed, (int)under_min, (int)hud_linked);
-                if (alert_valid) {
-                    ESP_LOGI(TAG, "  -> canh bao phia truoc: cach %u m, gioi han %u km/h",
-                             alert_dist, alert_limit);
+                if (next_limit_valid) {
+                    ESP_LOGI(TAG, "  -> bien bao sap toi: cach %u m, gioi han %u km/h",
+                             next_limit_dist, next_limit_kmh);
+                }
+                if (camera_valid) {
+                    ESP_LOGI(TAG, "  -> camera: cach %u m", camera_dist);
                 }
 
                 if (s_data_cb) {
@@ -498,16 +509,19 @@ static int access_cb(uint16_t conn_handle, uint16_t attr_handle,
                 }
 
                 // Dua thong tin mo rong len UI qua duong navigation san co.
-                // alert_limit_kmh/alert_distance_m la SO THO (0 = khong co
-                // canh bao) - ui_screens.c ve thanh vong tron rieng (giong
-                // bien bao gioi han), khong con qua nav.distance/nav.road
-                // (string, danh cho Google Maps that su qua duong JSON).
+                // Cac truong nay la SO THO (0 = khong co) - ui_screens.c ve
+                // thanh 2 vong tron rieng (giong bien bao gioi han), khong
+                // con qua nav.distance/nav.road (string, danh cho Google
+                // Maps that su qua duong JSON).
                 if (s_nav_cb) {
                     nav_data_t nav = { 0 };
                     nav.nav_state = (int16_t)nav_state;
-                    if (alert_valid) {
-                        nav.alert_limit_kmh = (int16_t)alert_limit;
-                        nav.alert_distance_m = (int32_t)alert_dist;
+                    if (next_limit_valid) {
+                        nav.alert_limit_kmh = (int16_t)next_limit_kmh;
+                        nav.alert_distance_m = (int32_t)next_limit_dist;
+                    }
+                    if (camera_valid) {
+                        nav.camera_distance_m = (int32_t)camera_dist;
                     }
                     if (min_limit > 0) {
                         snprintf(nav.instruction, sizeof(nav.instruction),
