@@ -13,6 +13,7 @@
 #include "nvs_settings.h"
 
 #include "lcd_display.h"
+#include "ui_screens.h"
 #include "img_stream.h"
 #include "codec_board.h"
 #include "audio_pipeline.h"
@@ -47,6 +48,7 @@ static void set_volume(uint8_t percent)
 {
     codec_board_set_volume(percent);
     nvs_settings_set_volume(percent);
+    ui_show_volume_overlay(percent);
 }
 
 static void adjust_volume(int delta)
@@ -58,12 +60,13 @@ static void adjust_volume(int delta)
 }
 
 // ---- Canh bao toc do ----
-// Da xoa UI toc do tren man hinh (chi con hien anh bong bong) - cac ham
-// duoi day gio chi con giu log/canh bao am thanh (dang tat qua
-// CAR_ALERT_SOUND_ENABLED), khong con goi ui_screens.c nua.
+// UI so lieu (ui_screens.c) da duoc noi lai: hien toc do hien tai + bien bao
+// tren board thay cho anh bong bong (tam dung ben Android do chat luong
+// anh kem - xem VietmapAccessibilityService.kt).
 static void limit_debounce_cb(void *arg)
 {
     s_limit_last_beep_us = esp_timer_get_time();
+    ui_flash_limit_changed();
 #if CAR_ALERT_SOUND_ENABLED
     alert_sound_play(ALERT_SOUND_LIMIT_CHANGED);
 #endif
@@ -72,6 +75,8 @@ static void limit_debounce_cb(void *arg)
 // ---- Callback: nhan du lieu navigation (Waze HUD Link state) ----
 static void on_car_data(uint16_t speed_kmh, uint16_t limit_kmh, void *ctx)
 {
+    ui_car_update(speed_kmh, limit_kmh);
+
     bool now_over = (limit_kmh > 0 && speed_kmh > limit_kmh);
 
     if (s_car_has_data) {
@@ -91,6 +96,7 @@ static void on_car_data(uint16_t speed_kmh, uint16_t limit_kmh, void *ctx)
         }
         if (now_over && !s_car_was_over_limit) {
             ESP_LOGW(TAG, "Vuot toc do gioi han: %u > %u km/h", speed_kmh, limit_kmh);
+            ui_flash_over_limit();
 #if CAR_ALERT_SOUND_ENABLED
             alert_sound_play(ALERT_SOUND_SPEED_OVER);
 #endif
@@ -102,18 +108,28 @@ static void on_car_data(uint16_t speed_kmh, uint16_t limit_kmh, void *ctx)
     s_car_has_data = true;
 }
 
-// ---- Callback: nhan thong tin dan duong tu Google Maps ----
-// Khong con UI de hien thi - giu callback rong de waze_hud_ble khong loi
-// khi goi waze_hud_ble_set_nav_cb().
+// ---- Callback: nhan thong tin dan duong tu Google Maps / VMSX (bien bao
+// sap toi + khoang cach, tu waze_hud_ble.c dich VMSX sang nav_data_t) ----
 static void on_nav_data(const nav_data_t *nav, void *ctx)
 {
-    (void)nav;
+    if (!nav) return;
+    ui_nav_update(nav->direction, nav->distance, nav->road, nav->instruction);
+
+    if (nav->nav_state >= 0) {
+        ui_set_nav_state(nav->nav_state);
+    }
+
+    if (nav->time_remaining[0] || nav->total_dist[0] || nav->eta[0]) {
+        extern void ui_nav_update_meta(const char *time_remaining, const char *total_dist, const char *eta);
+        ui_nav_update_meta(nav->time_remaining, nav->total_dist, nav->eta);
+    }
 }
 
 // ---- Callback: nhan thong tin xe (OBD-II: toc do, nhiet do, ap suat lop) ----
 static void on_vehicle_data(const vehicle_data_t *vd, void *ctx)
 {
-    (void)vd;
+    if (!vd) return;
+    ui_vehicle_update(vd);
 }
 
 // ---- Callback tu buttons ----
@@ -155,10 +171,13 @@ void app_main(void)
 
     ESP_ERROR_CHECK(status_led_init());
     ESP_ERROR_CHECK(lcd_display_init());
-    // Da xoa UI toc do (ui_init/ui_show_car_mode) - man hinh gio chi con
-    // canvas anh bong bong (+ label "Loading..." truoc khi co frame dau).
+    ui_init(lcd_display_get_lvgl_disp());
+    // Image stream: van khoi tao (san sang bat lai sau) nhung AN NGAY - dang
+    // tam dung gui anh bong bong tu Android (chat luong kem), UI so lieu
+    // (ui_screens.c) la noi dung chinh tren man hinh luc nay.
     img_stream_init(lv_display_get_screen_active(lcd_display_get_lvgl_disp()));
-    log_heap_checkpoint("lcd_display+img_stream");
+    img_stream_show(false);
+    log_heap_checkpoint("lcd_display+ui_init+img_stream");
 
     ESP_ERROR_CHECK(codec_board_init());
     log_heap_checkpoint("codec_board_init");
@@ -174,6 +193,7 @@ void app_main(void)
     ESP_ERROR_CHECK(battery_monitor_init());
     ESP_ERROR_CHECK(buttons_init(on_button_event, NULL));
 
+    ui_show_car_mode();
     status_led_set_pattern(LED_PATTERN_SOLID);
 
     esp_err_t err = waze_hud_ble_start(on_car_data, NULL);
@@ -188,9 +208,12 @@ void app_main(void)
     ESP_LOGI(TAG, "Khoi dong xong - Car Mode (BLE). Cho ket noi tu dien thoai...");
 
     while (1) {
+        ui_update_battery(battery_monitor_get_level(), battery_monitor_is_charging());
+
         bool connected = waze_hud_ble_is_connected();
         if (connected != s_ble_was_connected) {
             ESP_LOGI(TAG, "BLE %s", connected ? "connected" : "disconnected");
+            ui_set_ble_connected(connected);
             img_stream_set_connected(connected);
             s_ble_was_connected = connected;
         }
@@ -203,7 +226,8 @@ void app_main(void)
                 s_ble_disconnect_since_us = esp_timer_get_time();
             } else if (!s_car_speed_reset_done &&
                        (esp_timer_get_time() - s_ble_disconnect_since_us) > BLE_DISCONNECT_RESET_US) {
-                ESP_LOGW(TAG, "Mat ket noi BLE qua 15s");
+                ESP_LOGW(TAG, "Mat ket noi BLE qua 15s, reset toc do hien thi ve 0");
+                ui_car_update(0, s_car_prev_limit);
                 s_car_speed_reset_done = true;
             }
         }

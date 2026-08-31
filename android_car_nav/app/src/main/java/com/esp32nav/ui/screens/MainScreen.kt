@@ -32,7 +32,12 @@ fun MainScreen(
     application: CarNavApplication,
     onRequestPermissions: () -> Unit
 ) {
-    val bleState by bleManager.bleState.collectAsState()
+    // Trạng thái kết nối board hiển thị lấy từ imageRelay (kênh THẬT đang
+    // connected + gửi data — service/char 0xFFFF/0x9ABC), KHÔNG phải
+    // bleManager.bleState nữa: BleManager quét tên "VIETMAP_HUD_H1X" nhưng
+    // firmware advertise "VIETMAP_HUD_H50" nên không bao giờ khớp, làm UI
+    // kẹt ở Scanning/Disconnected dù board thực tế đã connected.
+    val bleState by application.imageRelay.bleState.collectAsState()
     val navData by application.currentNavData.collectAsState()
     val messageLog by application.messageLog.collectAsState()
     val vehicleData by application.vhalManager.vehicleData.collectAsState()

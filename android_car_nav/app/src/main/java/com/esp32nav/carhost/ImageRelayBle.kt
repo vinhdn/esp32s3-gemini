@@ -16,6 +16,11 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.esp32nav.model.BleConnectionState
+import com.esp32nav.model.BleState
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.util.UUID
 
 private const val TAG = "ImageRelayBle"
@@ -49,6 +54,15 @@ class ImageRelayBle(private val context: Context) {
     var isConnected: Boolean = false
         private set
 
+    // MainActivity trước đây hiển thị trạng thái kết nối board qua
+    // bleManager.bleState (BleManager, giao thức HLP cũ) — nhưng
+    // BleManager quét tên "VIETMAP_HUD_H1X" trong khi firmware advertise
+    // "VIETMAP_HUD_H50" (xem waze_hud_ble.h), nên KHÔNG BAO GIỜ khớp được,
+    // UI luôn kẹt ở Scanning/Disconnected dù ImageRelayBle (đúng tên H50)
+    // đã connected và đang gửi data thật. UI giờ đọc trạng thái từ đây.
+    private val _bleState = MutableStateFlow(BleState())
+    val bleState: StateFlow<BleState> = _bleState.asStateFlow()
+
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private val bluetoothAdapter get() = bluetoothManager.adapter
     private val scanner get() = bluetoothAdapter?.bluetoothLeScanner
@@ -77,6 +91,7 @@ class ImageRelayBle(private val context: Context) {
         writeCharacteristic = null
         isConnected = false
         isConnecting = false
+        _bleState.value = BleState(connectionState = BleConnectionState.DISCONNECTED)
     }
 
     private fun startScan() {
@@ -91,6 +106,7 @@ class ImageRelayBle(private val context: Context) {
         try {
             s.startScan(filters, settings, scanCallback)
             Log.i(TAG, "startScan for $TARGET_DEVICE_NAME")
+            _bleState.value = BleState(connectionState = BleConnectionState.SCANNING)
         } catch (e: Exception) {
             Log.e(TAG, "startScan failed: ${e.message}")
             mainHandler.postDelayed({ startScan() }, 3000)
@@ -109,6 +125,7 @@ class ImageRelayBle(private val context: Context) {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             if (isConnecting || isConnected) return
             isConnecting = true
+            _bleState.value = BleState(connectionState = BleConnectionState.CONNECTING)
             try {
                 scanner?.stopScan(this)
             } catch (_: Exception) {}
@@ -140,6 +157,10 @@ class ImageRelayBle(private val context: Context) {
                     writeCharacteristic = null
                     try { g.close() } catch (_: Exception) {}
                     if (gatt === g) gatt = null
+                    _bleState.value = BleState(
+                        connectionState = BleConnectionState.DISCONNECTED,
+                        lastError = if (status != BluetoothGatt.GATT_SUCCESS) "Disconnected (status $status)" else null
+                    )
                     if (wanted) mainHandler.postDelayed({ startScan() }, 2000)
                 }
             }
@@ -166,6 +187,11 @@ class ImageRelayBle(private val context: Context) {
             }
             writeCharacteristic = chr
             isConnected = true
+            _bleState.value = BleState(
+                connectionState = BleConnectionState.CONNECTED,
+                deviceName = g.device?.name ?: TARGET_DEVICE_NAME,
+                mtu = currentMtu
+            )
             Log.i(TAG, "Sẵn sàng gửi ảnh qua 0x9ABC")
         }
 

@@ -10,6 +10,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.esp32nav.CarNavApplication
+import com.esp32nav.carhost.VmsxFrame
 
 /**
  * Accessibility Service đọc thông số từ Vietmap Live + DatMap.
@@ -702,8 +703,38 @@ class VietmapAccessibilityService : AccessibilityService() {
 
         val heartbeatDue = System.currentTimeMillis() - lastScreenshotAt >= heartbeatIntervalMs
         if (changed || heartbeatDue) {
-            captureAndSendBubbleImage(window.id)
+            lastScreenshotAt = System.currentTimeMillis()
+            // TẠM COMMENT: gửi bitmap bong bóng — chất lượng hiển thị trên
+            // board kém (ảnh nhỏ/nén JPEG), chuyển sang gửi SỐ LIỆU (VMSX)
+            // như board đã hiển thị trước đây (xem app_main.c: on_car_data/
+            // on_nav_data nối lại vào ui_screens.c). Bật lại bằng cách bỏ
+            // comment dòng dưới (và có thể bỏ dòng sendVmsxData ở trên).
+            // captureAndSendBubbleImage(window.id)
+            sendVmsxData(parsedSpeed, speedLimit, alertLimit, alertDistance)
         }
+    }
+
+    /**
+     * Gửi 4 giá trị đọc được từ bong bóng dưới dạng frame VMSX (đúng định
+     * dạng VmslRelay.smali/waze_hud_ble.c đã dùng) — board dùng lại UI số
+     * liệu sẵn có (ui_screens.c) để hiển thị, không cần giải mã JPEG.
+     *  - speedLimit   : biển báo tốc độ hiện tại (currentSpeedLimit ở trên)
+     *  - currentSpeed : tốc độ hiện tại
+     *  - alertLimit   : biển báo tốc độ SẮP TỚI (next limit)
+     *  - alertDistanceMeters : khoảng cách tới cảnh báo đó (vd tới camera)
+     */
+    private fun sendVmsxData(currentSpeed: Int, speedLimit: Int, alertLimit: Int, alertDistanceMeters: Int) {
+        val app = application as? CarNavApplication ?: return
+        val frame = VmsxFrame.build(
+            speedLimit = speedLimit,
+            currentSpeed = currentSpeed.coerceAtLeast(0),
+            alertDistanceMeters = alertDistanceMeters,
+            alertSpeedLimit = alertLimit,
+            overSpeed = speedLimit > 0 && currentSpeed > speedLimit,
+            hudConnected = true,
+        )
+        Log.i(TAG, "📊 VMSX gửi: speed=$currentSpeed limit=$speedLimit nextLimit=$alertLimit alertDist=${alertDistanceMeters}m")
+        app.imageRelay.sendRawFrame(frame)
     }
 
     private var lastScreenshotAt = 0L

@@ -431,8 +431,19 @@ void img_stream_show(bool visible)
     if (lvgl_port_lock(100)) {
         if (visible) {
             lv_obj_clear_flag(s_canvas, LV_OBJ_FLAG_HIDDEN);
+            // Chi hien lai label "Loading..." neu chua tung nhan frame nao -
+            // tranh de "Loading..." tai xuat hien de len anh/UI da co san.
+            if (s_loading_label && !s_first_frame_shown) {
+                lv_obj_clear_flag(s_loading_label, LV_OBJ_FLAG_HIDDEN);
+            }
         } else {
+            // An ca canvas (mac dinh ve den) lan label "Loading..." - dung
+            // khi tam dung luong anh bong bong (vd chuyen sang hien so lieu
+            // qua ui_screens.c), tranh de canvas den/"Loading..." che UI so.
             lv_obj_add_flag(s_canvas, LV_OBJ_FLAG_HIDDEN);
+            if (s_loading_label) {
+                lv_obj_add_flag(s_loading_label, LV_OBJ_FLAG_HIDDEN);
+            }
         }
         lvgl_port_unlock();
     }
