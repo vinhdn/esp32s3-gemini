@@ -800,8 +800,11 @@ class VietmapAccessibilityService : AccessibilityService() {
             if (target != null) {
                 // Board (canvas 240x240, xem img_stream.c) không cần ảnh to
                 // hơn thế — thu nhỏ trước khi nén để chắc chắn dưới
-                // IMG_MAX_JPEG_SIZE (20KB) của firmware.
-                val scaled = scaleToFit(target, 240)
+                // IMG_MAX_JPEG_SIZE (20KB) của firmware. Giảm thêm ~40% (240 ->
+                // 144) so với trước để board (tjpgd ROM decoder) giải mã nhanh
+                // hơn — thời gian decode phụ thuộc chủ yếu vào số pixel, không
+                // chỉ dung lượng JPEG.
+                val scaled = scaleToFit(target, 144)
                 sendComposite(scaled)
                 scaled.recycle()
             }
