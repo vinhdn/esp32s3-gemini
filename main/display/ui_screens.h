@@ -28,8 +28,11 @@ void ui_nav_update(const char *direction, const char *distance, const char *road
 // Xoa thong tin navigation.
 void ui_nav_clear(void);
 
-// Hien thi navigationState o dong duoi cung (<0 => xoa).
-void ui_set_nav_state(int nav_state);
+// Cap nhat 2 vong tron nho (giong kieu bien bao gioi han, nho hon, o duoi):
+// bien bao toc do sap toi (trai) + khoang cach toi camera/canh bao (phai,
+// nen vang). limit_kmh<=0 => "!" ; distance_m<=0 => "--" (giong placeholder
+// tren bong bong VietMap Live).
+void ui_set_next_alert(int16_t next_limit_kmh, int32_t alert_distance_m);
 
 // Cap nhat vi tri hien tai tu Vietmap Live (dong rieng, mau trang).
 void ui_set_location(const char *location);

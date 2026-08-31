@@ -31,6 +31,12 @@ typedef struct {
     char time_remaining[16]; // "36 min" - thoi gian con lai
     char total_dist[16];   // "12 km" - khoang cach tong con lai
     int16_t nav_state;     // navigationState tu VietMap (VMSX), -1 = khong co
+    // Canh bao (bien bao/camera) sap toi, tu frame VMSX - so tho (khong phai
+    // string da format) de UI ve thanh vong tron giong bien bao gioi han.
+    // 0 = khong co canh bao (giong quy uoc limit_kmh=0 o cho khac) - cac
+    // "nav_data_t nav = {0}" hien co deu tu dong dung sentinel nay.
+    int16_t alert_limit_kmh;
+    int32_t alert_distance_m;
 } nav_data_t;
 
 typedef void (*waze_hud_nav_cb_t)(const nav_data_t *nav, void *ctx);

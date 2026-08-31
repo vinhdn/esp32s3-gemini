@@ -48,7 +48,12 @@ typedef struct {
     lv_obj_t *speed_circle;          // Hình tròn chứa tốc độ hiện tại
     lv_obj_t *speed_label;           // "69" số tốc độ bên trong circle
     lv_obj_t *eta_label;             // "ETA: 10:20 AM"
-    lv_obj_t *nav_state_label;       // navigationState (duoi cung)
+
+    // 2 vòng tròn nhỏ (dưới 2 vòng chính): biển báo sắp tới + camera
+    lv_obj_t *next_limit_circle;
+    lv_obj_t *next_limit_number;
+    lv_obj_t *camera_circle;         // nền vàng
+    lv_obj_t *camera_number;
 
     // Volume overlay
     lv_obj_t *volume_overlay;
@@ -98,6 +103,17 @@ static void volume_hide_cb(lv_timer_t *timer)
     lv_timer_del(timer);
 }
 
+// Dat text cho label trong 2 vong tron LON (limit_sign/speed_circle): dung
+// font_speed_64 (64px) cho so thuc, nhung font nay CHI co glyph cho so/':'
+// '/' 'h' 'k' 'm' (subset de tiet kiem flash) - khong co '!' hay '-', hien
+// thi thanh hinh chu nhat loi (tofu box) neu dung. Placeholder ("!") phai
+// chuyen sang lv_font_vi_20 (nho hon nhung co du glyph) de hien dung.
+static void set_big_circle_text(lv_obj_t *label, const char *text, bool is_number)
+{
+    lv_obj_set_style_text_font(label, is_number ? &lv_font_speed_64 : &lv_font_vi_20, 0);
+    lv_label_set_text(label, text);
+}
+
 void ui_init(lv_display_t *disp)
 {
     lvgl_port_lock(0);
@@ -126,23 +142,22 @@ void ui_init(lv_display_t *disp)
     lv_obj_align(s_ui.time_remaining_label, LV_ALIGN_TOP_MID, -20, 2);
     lv_label_set_text(s_ui.time_remaining_label, "");
 
-    // === SPEED LIMIT SIGN (GIUA man hinh, to nhat, 112x112) ===
+    // === SPEED LIMIT SIGN (to nhat, 128x128) - day cao gan status bar ===
     s_ui.limit_sign = lv_obj_create(scr);
     lv_obj_remove_style_all(s_ui.limit_sign);
-    lv_obj_set_size(s_ui.limit_sign, 112, 112);
+    lv_obj_set_size(s_ui.limit_sign, 128, 128);
     lv_obj_set_style_radius(s_ui.limit_sign, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(s_ui.limit_sign, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(s_ui.limit_sign, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(s_ui.limit_sign, lv_color_hex(0xE02020), 0);
     lv_obj_set_style_border_width(s_ui.limit_sign, 7, 0);
-    lv_obj_align(s_ui.limit_sign, LV_ALIGN_CENTER, -54, -22);
+    lv_obj_align(s_ui.limit_sign, LV_ALIGN_TOP_LEFT, 4, 22);
 
     s_ui.limit_number = lv_label_create(s_ui.limit_sign);
     lv_obj_set_style_text_color(s_ui.limit_number, lv_color_black(), 0);
-    lv_obj_set_style_text_font(s_ui.limit_number, &lv_font_speed_64, 0);
     lv_obj_set_style_text_letter_space(s_ui.limit_number, 0, 0);
     lv_obj_center(s_ui.limit_number);
-    lv_label_set_text(s_ui.limit_number, "");
+    set_big_circle_text(s_ui.limit_number, "!", false);
 
     // === NAVIGATION DIRECTION (DƯỚI speed circles, y=100+) ===
     // Dùng lv_image 32x32 cho icon hướng rẽ rõ ràng
@@ -183,16 +198,17 @@ void ui_init(lv_display_t *disp)
     lv_obj_align(s_ui.location_label, LV_ALIGN_TOP_LEFT, 4, 190);
     lv_label_set_text(s_ui.location_label, "");
 
-    // === SPEED CIRCLE (GIUA man hinh, ben phai bien bao, 104x104) ===
+    // === SPEED CIRCLE (nho hon limit_sign, 88x88), can giua theo chieu doc
+    // voi limit_sign (top = 22 + (128-88)/2 = 42) ===
     s_ui.speed_circle = lv_obj_create(scr);
     lv_obj_remove_style_all(s_ui.speed_circle);
-    lv_obj_set_size(s_ui.speed_circle, 104, 104);
+    lv_obj_set_size(s_ui.speed_circle, 88, 88);
     lv_obj_set_style_radius(s_ui.speed_circle, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(s_ui.speed_circle, lv_color_hex(0x111111), 0);
     lv_obj_set_style_bg_opa(s_ui.speed_circle, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(s_ui.speed_circle, lv_color_hex(0x33BBFF), 0);
     lv_obj_set_style_border_width(s_ui.speed_circle, 4, 0);
-    lv_obj_align(s_ui.speed_circle, LV_ALIGN_CENTER, 58, -22);
+    lv_obj_align(s_ui.speed_circle, LV_ALIGN_TOP_RIGHT, -8, 42);
 
     s_ui.speed_label = lv_label_create(s_ui.speed_circle);
     lv_obj_set_style_text_color(s_ui.speed_label, lv_color_hex(0x33BBFF), 0);
@@ -201,22 +217,48 @@ void ui_init(lv_display_t *disp)
     lv_obj_center(s_ui.speed_label);
     lv_label_set_text(s_ui.speed_label, "0");
 
+    // === 2 VONG TRON NHO (duoi limit_sign/speed_circle, 60x60): bien bao
+    // toc do sap toi (trai, trang/vien do giong limit_sign) + camera/canh
+    // bao (phai, NEN VANG) ===
+    s_ui.next_limit_circle = lv_obj_create(scr);
+    lv_obj_remove_style_all(s_ui.next_limit_circle);
+    lv_obj_set_size(s_ui.next_limit_circle, 60, 60);
+    lv_obj_set_style_radius(s_ui.next_limit_circle, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(s_ui.next_limit_circle, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(s_ui.next_limit_circle, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(s_ui.next_limit_circle, lv_color_hex(0xE02020), 0);
+    lv_obj_set_style_border_width(s_ui.next_limit_circle, 4, 0);
+    lv_obj_align(s_ui.next_limit_circle, LV_ALIGN_TOP_LEFT, 30, 160);
+
+    s_ui.next_limit_number = lv_label_create(s_ui.next_limit_circle);
+    lv_obj_set_style_text_color(s_ui.next_limit_number, lv_color_black(), 0);
+    lv_obj_set_style_text_font(s_ui.next_limit_number, &lv_font_vi_20, 0);
+    lv_obj_center(s_ui.next_limit_number);
+    lv_label_set_text(s_ui.next_limit_number, "!");
+
+    s_ui.camera_circle = lv_obj_create(scr);
+    lv_obj_remove_style_all(s_ui.camera_circle);
+    lv_obj_set_size(s_ui.camera_circle, 60, 60);
+    lv_obj_set_style_radius(s_ui.camera_circle, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(s_ui.camera_circle, lv_color_hex(0xFFDD00), 0);
+    lv_obj_set_style_bg_opa(s_ui.camera_circle, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(s_ui.camera_circle, lv_color_hex(0x9C7A00), 0);
+    lv_obj_set_style_border_width(s_ui.camera_circle, 4, 0);
+    lv_obj_align(s_ui.camera_circle, LV_ALIGN_TOP_RIGHT, -30, 160);
+
+    s_ui.camera_number = lv_label_create(s_ui.camera_circle);
+    lv_obj_set_style_text_color(s_ui.camera_number, lv_color_black(), 0);
+    lv_obj_set_style_text_font(s_ui.camera_number, &lv_font_vi_20, 0);
+    lv_obj_center(s_ui.camera_number);
+    lv_label_set_text(s_ui.camera_number, "--");
+
     s_ui.eta_label = lv_label_create(scr);
     lv_obj_set_style_text_color(s_ui.eta_label, lv_color_hex(0x888888), 0);
     lv_obj_set_style_text_font(s_ui.eta_label, &lv_font_vi_14, 0);
     lv_obj_set_style_text_align(s_ui.eta_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(s_ui.eta_label, 230);
-    lv_obj_align(s_ui.eta_label, LV_ALIGN_BOTTOM_MID, 0, -22);
+    lv_obj_align(s_ui.eta_label, LV_ALIGN_BOTTOM_MID, 0, -4);
     lv_label_set_text(s_ui.eta_label, "");
-
-    // === NAVIGATION STATE (DUOI CUNG) ===
-    s_ui.nav_state_label = lv_label_create(scr);
-    lv_obj_set_style_text_color(s_ui.nav_state_label, lv_color_hex(0x9999AA), 0);
-    lv_obj_set_style_text_font(s_ui.nav_state_label, &lv_font_vi_14, 0);
-    lv_obj_set_style_text_align(s_ui.nav_state_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_width(s_ui.nav_state_label, 232);
-    lv_obj_align(s_ui.nav_state_label, LV_ALIGN_BOTTOM_MID, 0, -4);
-    lv_label_set_text(s_ui.nav_state_label, "");
 
     // === VOLUME OVERLAY ===
     s_ui.volume_overlay = lv_label_create(scr);
@@ -231,18 +273,19 @@ void ui_init(lv_display_t *disp)
 void ui_show_car_mode(void)
 {
     lvgl_port_lock(0);
-    // "!" khi chưa/không có giá trị hợp lệ, giống bong bóng VietMap Live -
-    // biển báo LUÔN hiện (không ẩn đi) để khớp UI bong bóng.
-    lv_label_set_text(s_ui.limit_number, "!");
+    // "!"/"--" khi chưa/không có giá trị hợp lệ, giống bong bóng VietMap
+    // Live - các vòng tròn LUÔN hiện (không ẩn đi) để khớp UI bong bóng.
+    set_big_circle_text(s_ui.limit_number, "!", false);
     lv_label_set_text(s_ui.speed_label, "0");
     lv_obj_add_flag(s_ui.nav_direction_img, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(s_ui.nav_distance_label, "--");
-    lv_label_set_text(s_ui.nav_road_label, "--");
+    lv_label_set_text(s_ui.nav_distance_label, "");
+    lv_label_set_text(s_ui.nav_road_label, "");
     lv_label_set_text(s_ui.location_label, "");
     lv_label_set_text(s_ui.time_remaining_label, "");
     lv_label_set_text(s_ui.eta_label, "");
-    lv_label_set_text(s_ui.nav_state_label, "");
     lv_obj_clear_flag(s_ui.limit_sign, LV_OBJ_FLAG_HIDDEN);
+    lv_label_set_text(s_ui.next_limit_number, "!");
+    lv_label_set_text(s_ui.camera_number, "--");
     lvgl_port_unlock();
     ui_set_ble_connected(false);
 }
@@ -256,10 +299,10 @@ void ui_car_update(uint16_t speed_kmh, uint16_t limit_kmh)
     char buf[16];
     if (limit_kmh > 0) {
         snprintf(buf, sizeof(buf), "%u", (unsigned)limit_kmh);
+        set_big_circle_text(s_ui.limit_number, buf, true);
     } else {
-        snprintf(buf, sizeof(buf), "!");
+        set_big_circle_text(s_ui.limit_number, "!", false);
     }
-    lv_label_set_text(s_ui.limit_number, buf);
     lv_obj_clear_flag(s_ui.limit_sign, LV_OBJ_FLAG_HIDDEN);
 
     // Tốc độ hiện tại (trong circle)
@@ -469,16 +512,30 @@ void ui_vehicle_update(const vehicle_data_t *data)
 }
 
 
-// Hien thi navigationState o dong duoi cung. nav_state < 0 => xoa dong nay.
-void ui_set_nav_state(int nav_state)
+void ui_set_next_alert(int16_t next_limit_kmh, int32_t alert_distance_m)
 {
     lvgl_port_lock(0);
-    if (nav_state < 0) {
-        lv_label_set_text(s_ui.nav_state_label, "");
+
+    char buf[16];
+    if (next_limit_kmh > 0) {
+        snprintf(buf, sizeof(buf), "%d", (int)next_limit_kmh);
+        lv_label_set_text(s_ui.next_limit_number, buf);
     } else {
-        char buf[32];
-        snprintf(buf, sizeof(buf), "navState: %d", nav_state);
-        lv_label_set_text(s_ui.nav_state_label, buf);
+        lv_label_set_text(s_ui.next_limit_number, "!");
     }
+
+    if (alert_distance_m > 0) {
+        if (alert_distance_m >= 1000) {
+            snprintf(buf, sizeof(buf), "%d.%dkm",
+                     (int)(alert_distance_m / 1000),
+                     (int)((alert_distance_m % 1000) / 100));
+        } else {
+            snprintf(buf, sizeof(buf), "%dm", (int)alert_distance_m);
+        }
+        lv_label_set_text(s_ui.camera_number, buf);
+    } else {
+        lv_label_set_text(s_ui.camera_number, "--");
+    }
+
     lvgl_port_unlock();
 }

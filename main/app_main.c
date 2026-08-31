@@ -114,10 +114,9 @@ static void on_nav_data(const nav_data_t *nav, void *ctx)
 {
     if (!nav) return;
     ui_nav_update(nav->direction, nav->distance, nav->road, nav->instruction);
-
-    if (nav->nav_state >= 0) {
-        ui_set_nav_state(nav->nav_state);
-    }
+    // Bien bao sap toi + camera -> 2 vong tron rieng (ui_set_next_alert),
+    // khong con qua nav_state_label (da bo hien thi navState).
+    ui_set_next_alert(nav->alert_limit_kmh, nav->alert_distance_m);
 
     if (nav->time_remaining[0] || nav->total_dist[0] || nav->eta[0]) {
         extern void ui_nav_update_meta(const char *time_remaining, const char *total_dist, const char *eta);
