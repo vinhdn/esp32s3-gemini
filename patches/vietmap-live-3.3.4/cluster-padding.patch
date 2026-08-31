@@ -1,0 +1,44 @@
+--- a/smali_classes2/Ta/b.smali
++++ b/smali_classes2/Ta/b.smali
+@@ -965,6 +965,42 @@
+
+     invoke-static {v1, v2}, Lkotlin/jvm/internal/o;->h(Ljava/lang/Object;Ljava/lang/String;)V
+
++    # vmsx_cluster_padding: shrink host-reported visibleArea before it drives
++    # map camera insets (EdgeInsets below) and the HUD widget layer (Va/f.e()),
++    # so the speed/limit sign stays clear of cluster/taplo overlays the head
++    # unit itself never reports through onVisibleAreaChanged. Tune the four
++    # px constants below to the real overlap measured on the target screen.
++    iget v14, v1, Landroid/graphics/Rect;->top:I
++
++    const/16 v15, 0x32
++
++    add-int/2addr v14, v15
++
++    iput v14, v1, Landroid/graphics/Rect;->top:I
++
++    iget v14, v1, Landroid/graphics/Rect;->left:I
++
++    const/16 v15, 0x32
++
++    add-int/2addr v14, v15
++
++    iput v14, v1, Landroid/graphics/Rect;->left:I
++
++    iget v14, v1, Landroid/graphics/Rect;->right:I
++
++    const/16 v15, 0x32
++
++    sub-int/2addr v14, v15
++
++    iput v14, v1, Landroid/graphics/Rect;->right:I
++
++    iget v14, v1, Landroid/graphics/Rect;->bottom:I
++
++    const/16 v15, 0x32
++
++    sub-int/2addr v14, v15
++
++    iput v14, v1, Landroid/graphics/Rect;->bottom:I
++
+     .line 1

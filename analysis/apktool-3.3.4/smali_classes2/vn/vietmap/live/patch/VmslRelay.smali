@@ -18,6 +18,7 @@
 
 .field private static gatt:Landroid/bluetooth/BluetoothGatt;
 .field private static characteristic:Landroid/bluetooth/BluetoothGattCharacteristic;
+.field private static connectSinceMs:J
 
 .field private static relayWriteActive:Z
 .field private static relayGatt:Landroid/bluetooth/BluetoothGatt;
@@ -772,7 +773,7 @@
 .end method
 
 .method private static final declared-synchronized handleRegisterGatt(Landroid/bluetooth/BluetoothGatt;Landroid/bluetooth/BluetoothGattCharacteristic;)V
-    .locals 2
+    .locals 4
 
     if-eqz p0, :done
     if-eqz p1, :done
@@ -787,6 +788,10 @@
     const/4 v1, 0x1
     sput-boolean v1, Lvn/vietmap/live/patch/VmslRelay;->dirty:Z
 
+    invoke-static {}, Ljava/lang/System;->currentTimeMillis()J
+    move-result-wide v2
+    sput-wide v2, Lvn/vietmap/live/patch/VmslRelay;->connectSinceMs:J
+
     :same_gatt
     sput-object p0, Lvn/vietmap/live/patch/VmslRelay;->gatt:Landroid/bluetooth/BluetoothGatt;
     sput-object p1, Lvn/vietmap/live/patch/VmslRelay;->characteristic:Landroid/bluetooth/BluetoothGattCharacteristic;
@@ -796,7 +801,7 @@
 .end method
 
 .method public static final declared-synchronized shouldKeepConnection()Z
-    .locals 1
+    .locals 5
 
     sget-boolean v0, Lvn/vietmap/live/patch/VmslRelay;->hasState:Z
     if-eqz v0, :do_not_keep
@@ -806,6 +811,18 @@
 
     sget-object v0, Lvn/vietmap/live/patch/VmslRelay;->characteristic:Landroid/bluetooth/BluetoothGattCharacteristic;
     if-eqz v0, :do_not_keep
+
+    invoke-static {}, Ljava/lang/System;->currentTimeMillis()J
+    move-result-wide v0
+
+    sget-wide v2, Lvn/vietmap/live/patch/VmslRelay;->connectSinceMs:J
+
+    sub-long v0, v0, v2
+
+    const-wide/32 v2, 0x3a98
+
+    cmp-long v4, v0, v2
+    if-gez v4, :do_not_keep
 
     const/4 v0, 0x1
     return v0
