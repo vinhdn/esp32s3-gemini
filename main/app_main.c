@@ -171,13 +171,12 @@ void app_main(void)
     ESP_ERROR_CHECK(status_led_init());
     ESP_ERROR_CHECK(lcd_display_init());
     ui_init(lcd_display_get_lvgl_disp());
-    // Image stream: van khoi tao va AN MAC DINH (UI so lieu la noi dung
-    // chinh) - nhung decode_task() se TU HIEN canvas ngay khi nhan duoc
-    // frame icon canh bao dau tien tu Android (demo doc anh that tu
-    // warning_alert_image, xem VietmapAccessibilityService.kt), khong can
-    // goi img_stream_show(true) thu cong o day.
-    img_stream_init(lv_display_get_screen_active(lcd_display_get_lvgl_disp()));
-    img_stream_show(false);
+    // Image stream: gan 2 canvas TRON lam con cua next_limit_circle/
+    // camera_circle (ui_screens.c) - hien dung vi tri khi Android gui icon
+    // that (warning_alert_image, xem VietmapAccessibilityService.kt). Canvas
+    // tu an cho toi khi co frame dau tien, giu nguyen so/placeholder cua
+    // ui_screens.c hien thi truoc do.
+    img_stream_init(ui_get_next_limit_circle(), ui_get_camera_circle());
     log_heap_checkpoint("lcd_display+ui_init+img_stream");
 
     ESP_ERROR_CHECK(codec_board_init());
@@ -215,7 +214,6 @@ void app_main(void)
         if (connected != s_ble_was_connected) {
             ESP_LOGI(TAG, "BLE %s", connected ? "connected" : "disconnected");
             ui_set_ble_connected(connected);
-            img_stream_set_connected(connected);
             s_ble_was_connected = connected;
         }
 

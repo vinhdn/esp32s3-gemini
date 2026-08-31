@@ -1,10 +1,13 @@
 #pragma once
 
-// img_stream — Nhan anh JPEG qua BLE (chunked), giai ma bang tjpgd ROM,
-// ve len LVGL canvas RGB565 (240x240). Dung cho hien thi ban do/camera tu
-// dien thoai gui xuong.
+// img_stream — nhan 1 frame JPEG GHEP 2 icon canh bao (trai=bien bao toc do
+// sap toi, phai=camera, warning_alert_image tu
+// VietmapAccessibilityService.kt) qua BLE, giai ma bang tjpgd ROM, tach doi
+// va ve vao 2 canvas TRON nho gan lam con cua next_limit_circle/
+// camera_circle (ui_screens.c) - dung vi tri, dung mau nen/vien san co.
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "esp_err.h"
 #include "lvgl.h"
@@ -13,26 +16,15 @@
 extern "C" {
 #endif
 
-// Khoi tao module: tao LVGL canvas (240x240 RGB565) ben trong `parent`,
-// khoi dong task giai ma JPEG. Goi SAU khi LVGL da san sang.
-esp_err_t img_stream_init(lv_obj_t *parent);
+// Khoi tao module: tao 2 canvas TRON (52x52 RGB565) lam con cua
+// left_circle/right_circle, khoi dong task giai ma JPEG. Goi SAU khi
+// ui_screens.c da tao 2 vong tron nay va LVGL da san sang.
+esp_err_t img_stream_init(lv_obj_t *left_circle, lv_obj_t *right_circle);
 
 // Nhan 1 chunk du lieu anh tu BLE. An toan goi tu BLE ISR/callback context.
-//
-// Giao thuc frame:
-//   Chunk dau tien: [0xFF, 0xD8, frame_id, total_chunks, ...jpeg_data...]
-//   Chunk tiep theo: [frame_id, chunk_index, ...jpeg_data...]
-//
-// Khi da du cac chunk cua 1 frame, task giai ma se tu dong chay.
+// Raw JPEG stream: tu dong nhan biet frame moi qua SOI (0xFF 0xD8) / ket
+// thuc qua EOI (0xFF 0xD9), khong can header rieng.
 void img_stream_feed_chunk(const uint8_t *data, uint16_t len);
-
-// An/hien canvas anh (de chuyen doi giua man hinh HUD va man hinh anh).
-void img_stream_show(bool visible);
-
-// Cham nho o goc man hinh bao trang thai ket noi BLE toi dien thoai (xanh =
-// connected, do = mat ket noi). Man hinh gio chi con canvas anh bong bong
-// nen can 1 dau hieu ket noi toi thieu, khong dua lai toan bo UI toc do cu.
-void img_stream_set_connected(bool connected);
 
 // Tra ve true neu module da khoi tao thanh cong.
 bool img_stream_is_ready(void);

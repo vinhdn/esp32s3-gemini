@@ -574,3 +574,13 @@ void ui_set_next_alert(int16_t next_limit_kmh, int32_t next_limit_distance_m, in
 
     lvgl_port_unlock();
 }
+
+lv_obj_t *ui_get_next_limit_circle(void)
+{
+    return s_ui.next_limit_circle;
+}
+
+lv_obj_t *ui_get_camera_circle(void)
+{
+    return s_ui.camera_circle;
+}

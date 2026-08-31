@@ -34,6 +34,12 @@ void ui_nav_clear(void);
 // "!" ; distance_m<=0 => "--" (giong placeholder tren bong bong VietMap Live).
 void ui_set_next_alert(int16_t next_limit_kmh, int32_t next_limit_distance_m, int32_t camera_distance_m);
 
+// Vòng tròn biển báo sắp tới / camera — img_stream.c gắn canvas icon ảnh
+// thật (warning_alert_image từ Android) làm con của các vòng tròn này để
+// hiển thị đúng vị trí, thay vì che cả màn hình.
+lv_obj_t *ui_get_next_limit_circle(void);
+lv_obj_t *ui_get_camera_circle(void);
+
 // Cap nhat vi tri hien tai tu Vietmap Live (dong rieng, mau trang).
 void ui_set_location(const char *location);
 

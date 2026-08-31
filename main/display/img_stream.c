@@ -1,10 +1,14 @@
-// img_stream.c — Nhan anh JPEG qua BLE (chunked), giai ma bang tjpgd trong
-// ROM ESP32-S3, hien thi tren LVGL canvas 240x240 RGB565.
+// img_stream.c — Nhan 1 frame JPEG ghep 2 icon canh bao (trai/phai) qua BLE
+// (chunked), giai ma bang tjpgd ROM trong ESP32-S3, tach doi va ve vao 2
+// canvas TRON nho gan lam con cua next_limit_circle/camera_circle
+// (ui_screens.c) — hien dung vi tri, dung mau nen/vien san co cua bong
+// bong VietMap Live, thay vi che ca man hinh nhu ban demo dau tien.
 //
 // Luong xu ly:
 //   BLE callback -> img_stream_feed_chunk() -> ghep chunk vao buffer PSRAM
 //   -> khi du frame, gui notify cho decode task -> jd_prepare + jd_decomp
-//   -> output callback chuyen RGB888 -> RGB565 truc tiep vao canvas buffer
+//   -> output callback: pixel nguon co sx < nua-trai -> canvas trai,
+//      con lai -> canvas phai (tu dong scale de vua vong tron 52x52)
 //   -> lvgl_port_lock + lv_obj_invalidate -> LVGL tu ve ra LCD.
 
 #include "img_stream.h"
@@ -20,16 +24,15 @@
 
 #include "esp32s3/rom/tjpgd.h"
 
-#include "board_config.h"
-
 static const char *TAG = "img_stream";
 
 // ------- Configuration -------
 #define IMG_MAX_JPEG_SIZE    (20 * 1024)   // Max 20KB JPEG per frame
-#define IMG_MAX_CHUNKS       64            // Max chunks per frame
 #define IMG_DECODE_WORK_SIZE 3100          // tjpgd workspace (>=JD_SZBUF + tables)
-#define IMG_WIDTH            BOARD_LCD_H_RES  // 240
-#define IMG_HEIGHT           BOARD_LCD_V_RES  // 240
+// Duong kinh vong tron icon - vong tron cha (next_limit_circle/
+// camera_circle, ui_screens.c) la 60x60 vien 4px, chua 52x52 vua khop trong
+// phan nen, khong de lo goc vuong ra ngoai vien mau.
+#define ICON_CANVAS_SIZE 52
 
 // ------- Frame assembly state (accessed from BLE context) -------
 typedef struct {
@@ -43,32 +46,24 @@ typedef struct {
 static frame_assembly_t s_assembly;
 static SemaphoreHandle_t s_assembly_mutex;  // protects s_assembly from BLE + task
 
-// Double buffer: one for assembling, one ready for decode
 static uint8_t *s_decode_buf;               // PSRAM buffer for decode input
 static uint32_t s_decode_size;              // size of JPEG in decode buffer
 static volatile bool s_frame_ready;         // signal to decode task
-// true trong SUOT qua trinh decode_task doc s_decode_buf (jd_prepare..jd_decomp),
-// khong chi luc cho duoc pick up. Thieu co nay truoc day gay race: BLE task co
-// the memcpy de len s_decode_buf NGAY TRONG LUC decode_task dang doc no (vi
-// s_frame_ready da bi set false tu dau vong lap, truoc khi decode xong), lam
-// frame dang giai ma bi rach/hong hinh. Chap nhan mat frame (theo yeu cau) thay
-// vi de bi race: frame moi den luc dang decode se bi bo qua o img_stream_feed_chunk().
+// true trong SUOT qua trinh decode_task doc s_decode_buf (jd_prepare..jd_decomp).
+// Frame moi den luc dang decode se bi bo qua o img_stream_feed_chunk() thay
+// vi ghi de giua chung (rach anh) - chap nhan mat frame.
 static volatile bool s_decoding;
 
 static TaskHandle_t s_decode_task;
 
-// LVGL canvas and buffer
-static lv_obj_t *s_canvas;
-static uint8_t *s_canvas_buf;              // PSRAM RGB565 buffer (240*240*2 = 115200 bytes)
-
-// Label "Loading..." hien khi chua nhan duoc frame bong bong nao - an vinh
-// vien sau frame dau tien giai ma thanh cong.
-static lv_obj_t *s_loading_label;
+// 2 canvas TRON, moi cai la con cua 1 vong tron trong ui_screens.c.
+static lv_obj_t *s_canvas_left;
+static uint8_t *s_canvas_left_buf;
+static lv_obj_t *s_canvas_right;
+static uint8_t *s_canvas_right_buf;
+// An ca 2 canvas cho toi khi co frame anh that dau tien - truoc do vong
+// tron cha van hien binh thuong voi so/placeholder cua no (ui_screens.c).
 static bool s_first_frame_shown;
-
-// Cham nho goc tren-phai bao trang thai ket noi BLE - dau hieu ket noi toi
-// thieu sau khi da xoa toan bo UI toc do (xem app_main.c/ui_screens.c).
-static lv_obj_t *s_conn_dot;
 
 static void *s_tjpgd_work;                 // PSRAM workspace for tjpgd
 
@@ -97,50 +92,43 @@ static UINT jpeg_input_func(JDEC *jd, BYTE *buff, UINT ndata)
     return ndata;
 }
 
-// Vi tri + he so scale de dat anh da giai ma len canvas 240x240. Anh Android
-// gui gio nho hon canvas (144px, giam de board giai ma nhanh hon - xem
-// VietmapAccessibilityService.kt) nen phai PHONG TO khi ve de luon khop du
-// chieu rong man hinh, khong con hien nho o giua nhu truoc. tjpgd chi ho tro
-// scale-DOWN luc decode (tham so scale cua jd_decomp: 0/1/2/3), nen phong to
-// duoc lam thu cong ngay trong jpeg_output_func (nearest-neighbor: 1 pixel
-// nguon -> 1 khoi pixel dich). Tinh lai truoc moi lan jd_decomp() trong
-// decode_task().
-static int16_t s_dst_x;
-static int16_t s_dst_y;
-static float s_scale_x = 1.0f;
-static float s_scale_y = 1.0f;
+// Anh nguon la 2 icon GHEP CANH NHAU, rong bang nhau (vd 80x40 -> moi ben
+// 40x40) - s_src_half_w = rong 1 nua, s_scale = he so phong/thu de vua
+// ICON_CANVAS_SIZE. Tinh lai truoc moi lan jd_decomp() trong decode_task().
+static uint16_t s_src_half_w;
+static float s_scale;
 
-// Output function: converts RGB888 -> RGB565, phong to (nearest-neighbor)
-// va ghi vao canvas buffer theo s_scale_x/s_scale_y.
+// Output function: converts RGB888 -> RGB565, tach trai/phai va phong to
+// (nearest-neighbor) vao dung canvas.
 static UINT jpeg_output_func(JDEC *jd, void *bitmap, JRECT *rect)
 {
     (void)jd;
     uint8_t *rgb888 = (uint8_t *)bitmap;
-    uint16_t *canvas_pixels = (uint16_t *)s_canvas_buf;
 
     for (uint16_t sy = rect->top; sy <= rect->bottom; sy++) {
-        int dyStart = s_dst_y + (int)(sy * s_scale_y);
-        int dyEnd = s_dst_y + (int)((sy + 1) * s_scale_y);
-        if (dyEnd <= dyStart) dyEnd = dyStart + 1;
-
         for (uint16_t sx = rect->left; sx <= rect->right; sx++) {
-            // RGB888 source pixel
             uint8_t r = *rgb888++;
             uint8_t g = *rgb888++;
             uint8_t b = *rgb888++;
-
-            int dxStart = s_dst_x + (int)(sx * s_scale_x);
-            int dxEnd = s_dst_x + (int)((sx + 1) * s_scale_x);
-            if (dxEnd <= dxStart) dxEnd = dxStart + 1;
-
-            // Convert to RGB565
             uint16_t pixel = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 
+            bool is_right = sx >= s_src_half_w;
+            uint16_t local_sx = is_right ? (uint16_t)(sx - s_src_half_w) : sx;
+            uint16_t *buf = is_right ? (uint16_t *)s_canvas_right_buf
+                                      : (uint16_t *)s_canvas_left_buf;
+
+            int dxStart = (int)(local_sx * s_scale);
+            int dxEnd = (int)((local_sx + 1) * s_scale);
+            if (dxEnd <= dxStart) dxEnd = dxStart + 1;
+            int dyStart = (int)(sy * s_scale);
+            int dyEnd = (int)((sy + 1) * s_scale);
+            if (dyEnd <= dyStart) dyEnd = dyStart + 1;
+
             for (int dy = dyStart; dy < dyEnd; dy++) {
-                if (dy < 0 || dy >= IMG_HEIGHT) continue;
-                uint16_t *row = canvas_pixels + (size_t)dy * IMG_WIDTH;
+                if (dy < 0 || dy >= ICON_CANVAS_SIZE) continue;
+                uint16_t *row = buf + (size_t)dy * ICON_CANVAS_SIZE;
                 for (int dx = dxStart; dx < dxEnd; dx++) {
-                    if (dx < 0 || dx >= IMG_WIDTH) continue;
+                    if (dx < 0 || dx >= ICON_CANVAS_SIZE) continue;
                     row[dx] = pixel;
                 }
             }
@@ -174,7 +162,7 @@ static void decode_task(void *arg)
             continue;
         }
 
-        ESP_LOGI(TAG, "Giai ma JPEG frame: %lu bytes", (unsigned long)size);
+        ESP_LOGI(TAG, "Giai ma JPEG icon canh bao: %lu bytes", (unsigned long)size);
 
         // Setup IO struct for tjpgd input callback
         io.data = s_decode_buf;
@@ -190,48 +178,18 @@ static void decode_task(void *arg)
             continue;
         }
 
-        ESP_LOGI(TAG, "JPEG: %ux%u", jdec.width, jdec.height);
+        ESP_LOGI(TAG, "JPEG icon: %ux%u", jdec.width, jdec.height);
 
-        // Determine scale factor to fit 240x240
-        // Scale: 0=1/1, 1=1/2, 2=1/4, 3=1/8
-        uint8_t scale = 0;
-        uint32_t w = jdec.width;
-        uint32_t h = jdec.height;
-        while (scale < 3 && (w > IMG_WIDTH * 2 || h > IMG_HEIGHT * 2)) {
-            scale++;
-            w /= 2;
-            h /= 2;
-        }
-        if (w > IMG_WIDTH || h > IMG_HEIGHT) {
-            // Still too big at current scale, try one more
-            if (scale < 3) {
-                scale++;
-            }
-        }
+        s_src_half_w = (uint16_t)(jdec.width / 2);
+        if (s_src_half_w == 0) s_src_half_w = 1;
+        s_scale = (float)ICON_CANVAS_SIZE / (float)s_src_half_w;
 
-        // Anh Android gui nho hon canvas (144px, xem ghi chu o
-        // jpeg_output_func) - phong to de LUON KHOP DU CHIEU RONG man hinh
-        // (yeu cau: "hien thi full screen match width"), giu nguyen ty le,
-        // can giua theo chieu doc. Neu ty le anh cao bat thuong khien phong
-        // theo chieu rong bi tran chieu cao canvas, gioi han lai theo chieu
-        // cao de khong ve ra ngoai (hiem gap voi bong bong, von ngang).
-        s_scale_x = (float)IMG_WIDTH / (float)w;
-        s_scale_y = s_scale_x;
-        int scaledH = (int)((float)h * s_scale_y + 0.5f);
-        if (scaledH > IMG_HEIGHT) {
-            s_scale_y = (float)IMG_HEIGHT / (float)h;
-            s_scale_x = s_scale_y;
-            scaledH = IMG_HEIGHT;
-        }
-        s_dst_x = 0;
-        s_dst_y = (int16_t)((IMG_HEIGHT - scaledH) / 2);
-        if (s_dst_y < 0) s_dst_y = 0;
-        // Xoa canvas ve den truoc de khong dinh anh frame truoc (vi tri/kich
-        // thuoc co the doi giua cac frame).
-        memset(s_canvas_buf, 0, (size_t)IMG_WIDTH * IMG_HEIGHT * sizeof(uint16_t));
+        memset(s_canvas_left_buf, 0, (size_t)ICON_CANVAS_SIZE * ICON_CANVAS_SIZE * sizeof(uint16_t));
+        memset(s_canvas_right_buf, 0, (size_t)ICON_CANVAS_SIZE * ICON_CANVAS_SIZE * sizeof(uint16_t));
 
-        // Decompress with output callback
-        res = jd_decomp(&jdec, jpeg_output_func, scale);
+        // Decompress with output callback (scale=0: giai ma full-res, anh
+        // nguon da rat nho - 80x40 - khong can tjpgd tu downscale).
+        res = jd_decomp(&jdec, jpeg_output_func, 0);
         // Từ đây trở đi không còn đọc s_decode_buf nữa - cho phép frame mới
         // ghi đè ngay cả khi phần hiển thị (LVGL invalidate) bên dưới còn chạy.
         s_decoding = false;
@@ -240,24 +198,18 @@ static void decode_task(void *arg)
             continue;
         }
 
-        // Invalidate LVGL canvas so it redraws, và ẩn vĩnh viễn label
-        // "Loading..." sau khung hình đầu tiên hiển thị thành công. Canvas
-        // có thể đang bị ẩn (img_stream_show(false) - mặc định khi UI số
-        // liệu là nội dung chính) - TỰ HIỆN lại ngay khi có frame ảnh thật
-        // (demo icon cảnh báo), không cần gọi img_stream_show(true) thủ công.
         if (lvgl_port_lock(100)) {
-            lv_obj_clear_flag(s_canvas, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_invalidate(s_canvas);
+            lv_obj_invalidate(s_canvas_left);
+            lv_obj_invalidate(s_canvas_right);
             if (!s_first_frame_shown) {
                 s_first_frame_shown = true;
-                if (s_loading_label) {
-                    lv_obj_add_flag(s_loading_label, LV_OBJ_FLAG_HIDDEN);
-                }
+                lv_obj_clear_flag(s_canvas_left, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_clear_flag(s_canvas_right, LV_OBJ_FLAG_HIDDEN);
             }
             lvgl_port_unlock();
         }
 
-        ESP_LOGI(TAG, "Frame giai ma va hien thi thanh cong");
+        ESP_LOGI(TAG, "Icon canh bao giai ma va hien thi thanh cong");
     }
 }
 
@@ -312,9 +264,7 @@ void img_stream_feed_chunk(const uint8_t *data, uint16_t len)
             // decode_task không đang đọc s_decode_buf (s_decoding) và không
             // có frame khác đang chờ pick up (s_frame_ready). Nếu board đang
             // bận giải mã frame trước, bỏ qua frame này luôn (chấp nhận mất
-            // frame) thay vì memcpy đè lên buffer đang được đọc — trước đây
-            // thiếu check s_decoding nên có thể ghi đè GIỮA LÚC decode_task
-            // đang đọc, làm ảnh bị rách/hỏng.
+            // frame) thay vì memcpy đè lên buffer đang được đọc.
             if (!s_frame_ready && !s_decoding && s_assembly.total_size > 100) {
                 memcpy(s_decode_buf, s_assembly.jpeg_buf, s_assembly.total_size);
                 s_decode_size = s_assembly.total_size;
@@ -334,10 +284,35 @@ void img_stream_feed_chunk(const uint8_t *data, uint16_t len)
 
 // ------- Public API -------
 
-esp_err_t img_stream_init(lv_obj_t *parent)
+static lv_obj_t *create_icon_canvas(lv_obj_t *parent, uint8_t **buf_out)
+{
+    size_t buf_size = (size_t)ICON_CANVAS_SIZE * ICON_CANVAS_SIZE * sizeof(uint16_t);
+    uint8_t *buf = heap_caps_calloc(1, buf_size, MALLOC_CAP_SPIRAM);
+    if (!buf) {
+        return NULL;
+    }
+    *buf_out = buf;
+
+    lv_obj_t *canvas = lv_canvas_create(parent);
+    lv_canvas_set_buffer(canvas, buf, ICON_CANVAS_SIZE, ICON_CANVAS_SIZE, LV_COLOR_FORMAT_RGB565);
+    // Bo tron goc theo dung hinh dang vong tron cha - clip_corner khien
+    // LVGL cat noi dung canvas (anh) theo radius, khong chi vien trang tri.
+    lv_obj_set_style_radius(canvas, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_clip_corner(canvas, true, 0);
+    lv_obj_center(canvas);
+    // An cho toi khi co frame anh that dau tien.
+    lv_obj_add_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+    return canvas;
+}
+
+esp_err_t img_stream_init(lv_obj_t *left_circle, lv_obj_t *right_circle)
 {
     if (s_initialized) {
         return ESP_OK;
+    }
+    if (!left_circle || !right_circle) {
+        ESP_LOGE(TAG, "left_circle/right_circle NULL");
+        return ESP_ERR_INVALID_ARG;
     }
 
     // Allocate JPEG receive buffer in PSRAM
@@ -361,14 +336,6 @@ esp_err_t img_stream_init(lv_obj_t *parent)
         return ESP_ERR_NO_MEM;
     }
 
-    // Allocate canvas framebuffer in PSRAM (240*240*2 = 115200 bytes RGB565)
-    size_t canvas_buf_size = IMG_WIDTH * IMG_HEIGHT * sizeof(uint16_t);
-    s_canvas_buf = heap_caps_calloc(1, canvas_buf_size, MALLOC_CAP_SPIRAM);
-    if (!s_canvas_buf) {
-        ESP_LOGE(TAG, "Khong cap phat duoc canvas buffer (%u bytes PSRAM)", (unsigned)canvas_buf_size);
-        return ESP_ERR_NO_MEM;
-    }
-
     // Create mutex for frame assembly
     s_assembly_mutex = xSemaphoreCreateMutex();
     if (!s_assembly_mutex) {
@@ -376,38 +343,18 @@ esp_err_t img_stream_init(lv_obj_t *parent)
         return ESP_ERR_NO_MEM;
     }
 
-    // Create LVGL canvas object. Khong con UI toc do de len tren nua - canvas
-    // (+ label loading) la NOI DUNG DUY NHAT tren man hinh.
+    // Create the 2 round icon canvases (children of the alert circles)
     if (lvgl_port_lock(200)) {
-        s_canvas = lv_canvas_create(parent);
-        lv_canvas_set_buffer(s_canvas, s_canvas_buf, IMG_WIDTH, IMG_HEIGHT,
-                             LV_COLOR_FORMAT_RGB565);
-        lv_obj_center(s_canvas);
-        // Fill with black initially - luon hien, khong con toggle full-screen
-        lv_canvas_fill_bg(s_canvas, lv_color_black(), LV_OPA_COVER);
-
-        // Label "Loading..." - tao SAU canvas nen mac dinh nam tren, an sau
-        // khi nhan duoc frame bong bong dau tien (xem decode_task()).
-        s_loading_label = lv_label_create(parent);
-        lv_obj_set_style_text_color(s_loading_label, lv_color_white(), 0);
-        lv_label_set_text(s_loading_label, "Loading...");
-        lv_obj_center(s_loading_label);
-
-        // Cham trang thai ket noi BLE - goc tren-phai, nho (10x10) de khong
-        // che anh bong bong. Do mac dinh (chua ket noi) den khi
-        // img_stream_set_connected(true) duoc goi.
-        s_conn_dot = lv_obj_create(parent);
-        lv_obj_remove_style_all(s_conn_dot);
-        lv_obj_set_size(s_conn_dot, 10, 10);
-        lv_obj_set_style_radius(s_conn_dot, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(s_conn_dot, lv_color_hex(0xE02020), 0);
-        lv_obj_set_style_bg_opa(s_conn_dot, LV_OPA_COVER, 0);
-        lv_obj_align(s_conn_dot, LV_ALIGN_TOP_RIGHT, -4, 4);
-
+        s_canvas_left = create_icon_canvas(left_circle, &s_canvas_left_buf);
+        s_canvas_right = create_icon_canvas(right_circle, &s_canvas_right_buf);
         lvgl_port_unlock();
     } else {
-        ESP_LOGE(TAG, "Khong lock duoc LVGL de tao canvas");
+        ESP_LOGE(TAG, "Khong lock duoc LVGL de tao canvas icon");
         return ESP_FAIL;
+    }
+    if (!s_canvas_left || !s_canvas_right) {
+        ESP_LOGE(TAG, "Khong cap phat duoc canvas buffer icon");
+        return ESP_ERR_NO_MEM;
     }
 
     // Create decode task (stack in PSRAM is ok for non-ISR task)
@@ -422,50 +369,12 @@ esp_err_t img_stream_init(lv_obj_t *parent)
     s_frame_ready = false;
     s_initialized = true;
 
-    ESP_LOGI(TAG, "img_stream khoi tao xong (canvas %dx%d, JPEG buf %dKB)",
-             IMG_WIDTH, IMG_HEIGHT, IMG_MAX_JPEG_SIZE / 1024);
+    ESP_LOGI(TAG, "img_stream khoi tao xong (2 canvas tron %dx%d, JPEG buf %dKB)",
+             ICON_CANVAS_SIZE, ICON_CANVAS_SIZE, IMG_MAX_JPEG_SIZE / 1024);
     return ESP_OK;
-}
-
-void img_stream_show(bool visible)
-{
-    if (!s_initialized || !s_canvas) {
-        return;
-    }
-    if (lvgl_port_lock(100)) {
-        if (visible) {
-            lv_obj_clear_flag(s_canvas, LV_OBJ_FLAG_HIDDEN);
-            // Chi hien lai label "Loading..." neu chua tung nhan frame nao -
-            // tranh de "Loading..." tai xuat hien de len anh/UI da co san.
-            if (s_loading_label && !s_first_frame_shown) {
-                lv_obj_clear_flag(s_loading_label, LV_OBJ_FLAG_HIDDEN);
-            }
-        } else {
-            // An ca canvas (mac dinh ve den) lan label "Loading..." - dung
-            // khi tam dung luong anh bong bong (vd chuyen sang hien so lieu
-            // qua ui_screens.c), tranh de canvas den/"Loading..." che UI so.
-            lv_obj_add_flag(s_canvas, LV_OBJ_FLAG_HIDDEN);
-            if (s_loading_label) {
-                lv_obj_add_flag(s_loading_label, LV_OBJ_FLAG_HIDDEN);
-            }
-        }
-        lvgl_port_unlock();
-    }
 }
 
 bool img_stream_is_ready(void)
 {
     return s_initialized;
-}
-
-void img_stream_set_connected(bool connected)
-{
-    if (!s_initialized || !s_conn_dot) {
-        return;
-    }
-    if (lvgl_port_lock(100)) {
-        lv_obj_set_style_bg_color(s_conn_dot,
-            connected ? lv_color_hex(0x33CC66) : lv_color_hex(0xE02020), 0);
-        lvgl_port_unlock();
-    }
 }
