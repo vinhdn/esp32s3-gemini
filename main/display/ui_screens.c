@@ -231,16 +231,18 @@ void ui_init(lv_display_t *disp)
 void ui_show_car_mode(void)
 {
     lvgl_port_lock(0);
-    lv_label_set_text(s_ui.limit_number, "");
+    // "!" khi chưa/không có giá trị hợp lệ, giống bong bóng VietMap Live -
+    // biển báo LUÔN hiện (không ẩn đi) để khớp UI bong bóng.
+    lv_label_set_text(s_ui.limit_number, "!");
     lv_label_set_text(s_ui.speed_label, "0");
     lv_obj_add_flag(s_ui.nav_direction_img, LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(s_ui.nav_distance_label, "");
-    lv_label_set_text(s_ui.nav_road_label, "");
+    lv_label_set_text(s_ui.nav_distance_label, "--");
+    lv_label_set_text(s_ui.nav_road_label, "--");
     lv_label_set_text(s_ui.location_label, "");
     lv_label_set_text(s_ui.time_remaining_label, "");
     lv_label_set_text(s_ui.eta_label, "");
     lv_label_set_text(s_ui.nav_state_label, "");
-    lv_obj_add_flag(s_ui.limit_sign, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(s_ui.limit_sign, LV_OBJ_FLAG_HIDDEN);
     lvgl_port_unlock();
     ui_set_ble_connected(false);
 }
@@ -249,15 +251,16 @@ void ui_car_update(uint16_t speed_kmh, uint16_t limit_kmh)
 {
     lvgl_port_lock(0);
 
-    // Biển báo giới hạn (góc trên phải)
+    // Biển báo giới hạn: LUÔN hiện (giống bong bóng VietMap Live) - "!" khi
+    // limit_kmh=0 (chưa nhận được/không hợp lệ) thay vì ẩn hẳn circle đi.
     char buf[16];
     if (limit_kmh > 0) {
         snprintf(buf, sizeof(buf), "%u", (unsigned)limit_kmh);
-        lv_label_set_text(s_ui.limit_number, buf);
-        lv_obj_clear_flag(s_ui.limit_sign, LV_OBJ_FLAG_HIDDEN);
     } else {
-        lv_obj_add_flag(s_ui.limit_sign, LV_OBJ_FLAG_HIDDEN);
+        snprintf(buf, sizeof(buf), "!");
     }
+    lv_label_set_text(s_ui.limit_number, buf);
+    lv_obj_clear_flag(s_ui.limit_sign, LV_OBJ_FLAG_HIDDEN);
 
     // Tốc độ hiện tại (trong circle)
     snprintf(buf, sizeof(buf), "%u", (unsigned)speed_kmh);

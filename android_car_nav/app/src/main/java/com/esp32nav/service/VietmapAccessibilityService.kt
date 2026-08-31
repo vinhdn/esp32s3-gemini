@@ -653,14 +653,39 @@ class VietmapAccessibilityService : AccessibilityService() {
         var nextLimitText: String? = null
         var alertDistanceText: String? = null
 
+        // root.refresh() TRƯỚC khi duyệt: khi VietMap Live ở BACKGROUND (chỉ
+        // còn bong bóng), AccessibilityNodeInfo trả về từ getWindows()/
+        // window.root có thể là snapshot CŨ do hệ thống cache node info —
+        // bong bóng trên màn hình đã đổi số thật nhưng cây node đọc được vẫn
+        // giữ giá trị lúc trước. refresh() ép lấy lại state mới nhất từ
+        // window nguồn. Đây là nguyên nhân "VMSX log vẫn dữ liệu cũ khi ở
+        // background" — foreground thường xuyên có layout pass mới nên cache
+        // tự invalidate, background thì không.
+        try {
+            root.refresh()
+        } catch (_: Exception) {
+        }
+
         fun visit(node: AccessibilityNodeInfo) {
             val id = node.viewIdResourceName
             if (id != null) {
                 when {
-                    id.endsWith("current_speed_textview") -> currentSpeedText = node.text?.toString()
-                    id.endsWith("speed_limit_widget_text_view") -> speedLimitText = node.text?.toString()
-                    id.endsWith("place_holder_textView") -> nextLimitText = node.text?.toString()
-                    id.endsWith("warning_speed_distance_text_view") -> alertDistanceText = node.text?.toString()
+                    id.endsWith("current_speed_textview") -> {
+                        try { node.refresh() } catch (_: Exception) {}
+                        currentSpeedText = node.text?.toString()
+                    }
+                    id.endsWith("speed_limit_widget_text_view") -> {
+                        try { node.refresh() } catch (_: Exception) {}
+                        speedLimitText = node.text?.toString()
+                    }
+                    id.endsWith("place_holder_textView") -> {
+                        try { node.refresh() } catch (_: Exception) {}
+                        nextLimitText = node.text?.toString()
+                    }
+                    id.endsWith("warning_speed_distance_text_view") -> {
+                        try { node.refresh() } catch (_: Exception) {}
+                        alertDistanceText = node.text?.toString()
+                    }
                 }
             }
             for (i in 0 until node.childCount) {

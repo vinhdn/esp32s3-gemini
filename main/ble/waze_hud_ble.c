@@ -498,6 +498,10 @@ static int access_cb(uint16_t conn_handle, uint16_t attr_handle,
                 }
 
                 // Dua thong tin mo rong len UI qua duong navigation san co.
+                // LUON dien nav.distance/nav.road (thay vi de rong khi khong
+                // co alert) - ui_nav_update() chi cap nhat label khi string
+                // khong rong, nen truoc day khong-alert se giu label CU/rong
+                // thay vi hien placeholder "--" nhu bong bong VietMap Live.
                 if (s_nav_cb) {
                     nav_data_t nav = { 0 };
                     nav.nav_state = (int16_t)nav_state;
@@ -513,7 +517,12 @@ static int access_cb(uint16_t conn_handle, uint16_t attr_handle,
                         }
                         if (alert_limit > 0) {
                             snprintf(nav.road, sizeof(nav.road), "Gioi han %u", alert_limit);
+                        } else {
+                            snprintf(nav.road, sizeof(nav.road), "--");
                         }
+                    } else {
+                        snprintf(nav.distance, sizeof(nav.distance), "--");
+                        snprintf(nav.road, sizeof(nav.road), "--");
                     }
                     if (min_limit > 0) {
                         snprintf(nav.instruction, sizeof(nav.instruction),
