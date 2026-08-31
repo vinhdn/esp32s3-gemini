@@ -659,6 +659,8 @@ class VietmapAccessibilityService : AccessibilityService() {
         var nextLimitText: String? = null
         var nextLimitDistanceText: String? = null
         var cameraDistanceText: String? = null
+        var leftIconBounds: Rect? = null
+        var rightIconBounds: Rect? = null
 
         // root.refresh() TRƯỚC khi duyệt: khi VietMap Live ở BACKGROUND (chỉ
         // còn bong bóng), AccessibilityNodeInfo trả về từ getWindows()/
@@ -706,6 +708,18 @@ class VietmapAccessibilityService : AccessibilityService() {
                             // Kiểu "h_" cũ không bọc trong left/right riêng -
                             // coi như thuộc bên trái (biển báo sắp tới).
                             else -> nextLimitDistanceText = text
+                        }
+                    }
+                    id.endsWith("warning_alert_image") -> {
+                        // Icon ẢNH thật của cảnh báo (biển báo/camera cụ thể) -
+                        // không có text/contentDescription để đọc kiểu, chỉ
+                        // lấy được bằng cách chụp bitmap vùng này (xem
+                        // captureAndSendAlertIcons()).
+                        val bounds = Rect()
+                        node.getBoundsInScreen(bounds)
+                        when (side) {
+                            1 -> leftIconBounds = bounds
+                            2 -> rightIconBounds = bounds
                         }
                     }
                 }
@@ -761,7 +775,101 @@ class VietmapAccessibilityService : AccessibilityService() {
             // comment dòng dưới (và có thể bỏ dòng sendVmsxData ở trên).
             // captureAndSendBubbleImage(window.id)
             sendVmsxData(parsedSpeed, speedLimit, nextLimit, nextLimitDistance, cameraDistance)
+            // Ảnh icon thật (biển báo/camera) trong warning_alert_image -
+            // gửi kèm, chất lượng thấp nhất (demo trước, xem
+            // captureAndSendAlertIcons()).
+            captureAndSendAlertIcons(leftIconBounds, rightIconBounds)
         }
+    }
+
+    private var lastIconCaptureAt = 0L
+
+    /**
+     * Chụp toàn màn hình (takeScreenshot — không phải MediaProjection), crop
+     * 2 vùng warning_alert_image (trái/phải), ghép thành 1 ảnh nhỏ rồi gửi
+     * qua board ở CHẤT LƯỢNG THẤP NHẤT (demo trước đã, theo yêu cầu) — dùng
+     * lại đúng pipeline JPEG có sẵn (ImageRelayBle/img_stream.c).
+     */
+    private fun captureAndSendAlertIcons(leftBounds: Rect?, rightBounds: Rect?) {
+        if (leftBounds == null && rightBounds == null) return
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) return
+        val now = System.currentTimeMillis()
+        if (now - lastIconCaptureAt < 700) return
+        lastIconCaptureAt = now
+
+        try {
+            takeScreenshot(
+                android.view.Display.DEFAULT_DISPLAY,
+                mainExecutor,
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(result: ScreenshotResult) {
+                        try {
+                            val hwBitmap = android.graphics.Bitmap.wrapHardwareBuffer(
+                                result.hardwareBuffer, result.colorSpace
+                            )
+                            val bitmap = hwBitmap?.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+                            result.hardwareBuffer.close()
+                            if (bitmap == null) return
+                            val composite = composeAlertIcons(bitmap, leftBounds, rightBounds)
+                            bitmap.recycle()
+                            if (composite != null) {
+                                sendLowQualityIcon(composite)
+                                composite.recycle()
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "xử lý icon cảnh báo lỗi: ${e.message}")
+                        }
+                    }
+
+                    override fun onFailure(errorCode: Int) {
+                        Log.w(TAG, "takeScreenshot (icon cảnh báo) thất bại: $errorCode")
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "takeScreenshot (icon cảnh báo) lỗi: ${e.message}")
+        }
+    }
+
+    /**
+     * Ghép 2 icon (trái/phải) cạnh nhau thành 1 ảnh nhỏ 80x40 — demo, không
+     * cần đẹp, board sẽ tự phóng to (khớp chiều rộng canvas, xem
+     * img_stream.c) nên vẫn nhìn rõ dù nguồn bé.
+     */
+    private fun composeAlertIcons(
+        source: android.graphics.Bitmap,
+        leftBounds: Rect?,
+        rightBounds: Rect?,
+    ): android.graphics.Bitmap? {
+        val leftCrop = cropSafe(source, leftBounds)
+        val rightCrop = cropSafe(source, rightBounds)
+        if (leftCrop == null && rightCrop == null) return null
+
+        val cell = 40
+        val out = android.graphics.Bitmap.createBitmap(cell * 2, cell, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(out)
+        canvas.drawColor(android.graphics.Color.BLACK)
+
+        leftCrop?.let {
+            canvas.drawBitmap(it, null, Rect(0, 0, cell, cell), null)
+            it.recycle()
+        }
+        rightCrop?.let {
+            canvas.drawBitmap(it, null, Rect(cell, 0, cell * 2, cell), null)
+            it.recycle()
+        }
+        return out
+    }
+
+    private fun sendLowQualityIcon(bitmap: android.graphics.Bitmap) {
+        val app = application as? CarNavApplication ?: return
+        val stream = java.io.ByteArrayOutputStream()
+        // Chất lượng thấp nhất theo yêu cầu (demo trước đã) - ảnh nguồn đã
+        // rất nhỏ (80x40) nên vẫn nhẹ dù nén thấp.
+        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 30, stream)
+        val bytes = stream.toByteArray()
+        Log.i(TAG, "🎨 icon cảnh báo: gửi ${bytes.size} byte (${bitmap.width}x${bitmap.height}, q=30)")
+        app.imageRelay.sendJpegFrame(bytes)
     }
 
     /**

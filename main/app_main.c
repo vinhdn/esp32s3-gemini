@@ -171,9 +171,11 @@ void app_main(void)
     ESP_ERROR_CHECK(status_led_init());
     ESP_ERROR_CHECK(lcd_display_init());
     ui_init(lcd_display_get_lvgl_disp());
-    // Image stream: van khoi tao (san sang bat lai sau) nhung AN NGAY - dang
-    // tam dung gui anh bong bong tu Android (chat luong kem), UI so lieu
-    // (ui_screens.c) la noi dung chinh tren man hinh luc nay.
+    // Image stream: van khoi tao va AN MAC DINH (UI so lieu la noi dung
+    // chinh) - nhung decode_task() se TU HIEN canvas ngay khi nhan duoc
+    // frame icon canh bao dau tien tu Android (demo doc anh that tu
+    // warning_alert_image, xem VietmapAccessibilityService.kt), khong can
+    // goi img_stream_show(true) thu cong o day.
     img_stream_init(lv_display_get_screen_active(lcd_display_get_lvgl_disp()));
     img_stream_show(false);
     log_heap_checkpoint("lcd_display+ui_init+img_stream");

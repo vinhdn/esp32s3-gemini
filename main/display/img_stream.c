@@ -241,8 +241,12 @@ static void decode_task(void *arg)
         }
 
         // Invalidate LVGL canvas so it redraws, và ẩn vĩnh viễn label
-        // "Loading..." sau khung hình đầu tiên hiển thị thành công.
+        // "Loading..." sau khung hình đầu tiên hiển thị thành công. Canvas
+        // có thể đang bị ẩn (img_stream_show(false) - mặc định khi UI số
+        // liệu là nội dung chính) - TỰ HIỆN lại ngay khi có frame ảnh thật
+        // (demo icon cảnh báo), không cần gọi img_stream_show(true) thủ công.
         if (lvgl_port_lock(100)) {
+            lv_obj_clear_flag(s_canvas, LV_OBJ_FLAG_HIDDEN);
             lv_obj_invalidate(s_canvas);
             if (!s_first_frame_shown) {
                 s_first_frame_shown = true;
