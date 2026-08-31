@@ -52,8 +52,10 @@ typedef struct {
     // 2 vòng tròn nhỏ (dưới 2 vòng chính): biển báo sắp tới + camera
     lv_obj_t *next_limit_circle;
     lv_obj_t *next_limit_number;
+    lv_obj_t *next_limit_distance_label;  // khoảng cách, chữ nhỏ dưới vòng tròn
     lv_obj_t *camera_circle;         // nền vàng
     lv_obj_t *camera_number;
+    lv_obj_t *camera_distance_label;      // khoảng cách, chữ nhỏ dưới vòng tròn
 
     // Volume overlay
     lv_obj_t *volume_overlay;
@@ -236,6 +238,15 @@ void ui_init(lv_display_t *disp)
     lv_obj_center(s_ui.next_limit_number);
     lv_label_set_text(s_ui.next_limit_number, "!");
 
+    // Khoảng cách tới biển báo sắp tới đó - chữ nhỏ ngay dưới vòng tròn.
+    s_ui.next_limit_distance_label = lv_label_create(scr);
+    lv_obj_set_style_text_color(s_ui.next_limit_distance_label, lv_color_hex(0xCCCCCC), 0);
+    lv_obj_set_style_text_font(s_ui.next_limit_distance_label, &lv_font_vi_14, 0);
+    lv_obj_set_style_text_align(s_ui.next_limit_distance_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(s_ui.next_limit_distance_label, 60);
+    lv_obj_align(s_ui.next_limit_distance_label, LV_ALIGN_TOP_LEFT, 30, 222);
+    lv_label_set_text(s_ui.next_limit_distance_label, "--");
+
     s_ui.camera_circle = lv_obj_create(scr);
     lv_obj_remove_style_all(s_ui.camera_circle);
     lv_obj_set_size(s_ui.camera_circle, 60, 60);
@@ -251,6 +262,15 @@ void ui_init(lv_display_t *disp)
     lv_obj_set_style_text_font(s_ui.camera_number, &lv_font_vi_20, 0);
     lv_obj_center(s_ui.camera_number);
     lv_label_set_text(s_ui.camera_number, "--");
+
+    // Khoảng cách tới camera - chữ nhỏ ngay dưới vòng tròn.
+    s_ui.camera_distance_label = lv_label_create(scr);
+    lv_obj_set_style_text_color(s_ui.camera_distance_label, lv_color_hex(0xCCCCCC), 0);
+    lv_obj_set_style_text_font(s_ui.camera_distance_label, &lv_font_vi_14, 0);
+    lv_obj_set_style_text_align(s_ui.camera_distance_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(s_ui.camera_distance_label, 60);
+    lv_obj_align(s_ui.camera_distance_label, LV_ALIGN_TOP_RIGHT, -30, 222);
+    lv_label_set_text(s_ui.camera_distance_label, "--");
 
     s_ui.eta_label = lv_label_create(scr);
     lv_obj_set_style_text_color(s_ui.eta_label, lv_color_hex(0x888888), 0);
@@ -285,7 +305,9 @@ void ui_show_car_mode(void)
     lv_label_set_text(s_ui.eta_label, "");
     lv_obj_clear_flag(s_ui.limit_sign, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(s_ui.next_limit_number, "!");
+    lv_label_set_text(s_ui.next_limit_distance_label, "--");
     lv_label_set_text(s_ui.camera_number, "--");
+    lv_label_set_text(s_ui.camera_distance_label, "--");
     lvgl_port_unlock();
     ui_set_ble_connected(false);
 }
@@ -512,6 +534,25 @@ void ui_vehicle_update(const vehicle_data_t *data)
 }
 
 
+// "850m" / "1.2km" hoac "--" neu <= 0.
+static void format_distance(char *buf, size_t buf_size, int32_t distance_m)
+{
+    if (distance_m <= 0) {
+        snprintf(buf, buf_size, "--");
+        return;
+    }
+    if (distance_m >= 1000) {
+        snprintf(buf, buf_size, "%d.%dkm",
+                 (int)(distance_m / 1000),
+                 (int)((distance_m % 1000) / 100));
+    } else {
+        snprintf(buf, buf_size, "%dm", (int)distance_m);
+    }
+}
+
+// next_limit_kmh/alert_distance_m deu tu CUNG 1 canh bao VMSX (wire format
+// chi mang 1 canh bao chung, chua phan biet duoc "sap doi gioi han" voi
+// "camera") - nen khoang cach hien ben duoi 2 vong tron la CUNG 1 gia tri.
 void ui_set_next_alert(int16_t next_limit_kmh, int32_t alert_distance_m)
 {
     lvgl_port_lock(0);
@@ -524,18 +565,12 @@ void ui_set_next_alert(int16_t next_limit_kmh, int32_t alert_distance_m)
         lv_label_set_text(s_ui.next_limit_number, "!");
     }
 
-    if (alert_distance_m > 0) {
-        if (alert_distance_m >= 1000) {
-            snprintf(buf, sizeof(buf), "%d.%dkm",
-                     (int)(alert_distance_m / 1000),
-                     (int)((alert_distance_m % 1000) / 100));
-        } else {
-            snprintf(buf, sizeof(buf), "%dm", (int)alert_distance_m);
-        }
-        lv_label_set_text(s_ui.camera_number, buf);
-    } else {
-        lv_label_set_text(s_ui.camera_number, "--");
-    }
+    format_distance(buf, sizeof(buf), alert_distance_m);
+    lv_label_set_text(s_ui.next_limit_distance_label, buf);
+    lv_label_set_text(s_ui.camera_distance_label, buf);
+
+    format_distance(buf, sizeof(buf), alert_distance_m);
+    lv_label_set_text(s_ui.camera_number, buf);
 
     lvgl_port_unlock();
 }
