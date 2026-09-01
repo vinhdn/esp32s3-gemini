@@ -37,6 +37,7 @@ typedef struct {
     // Speed limit sign (TOP RIGHT, nhỏ ~60x60)
     lv_obj_t *limit_sign;
     lv_obj_t *limit_number;
+    lv_obj_t *weather_temp_bold_main; // bản sao lệch 1px của limit_number khi hiện nhiệt độ - giả đậm (không có font bold)
     lv_obj_t *weather_icon_main;     // badge thời tiết HÔM NAY (khi không có limit)
 
     // Navigation (CENTER - phần chính)
@@ -53,6 +54,7 @@ typedef struct {
     // 2 vòng tròn nhỏ (dưới 2 vòng chính): biển báo sắp tới + camera
     lv_obj_t *next_limit_circle;
     lv_obj_t *next_limit_number;
+    lv_obj_t *weather_temp_bold_next; // bản sao lệch 1px của next_limit_number khi hiện nhiệt độ
     lv_obj_t *next_limit_distance_label;  // khoảng cách, chữ nhỏ dưới vòng tròn
     lv_obj_t *weather_icon_next;     // badge thời tiết NGÀY MAI (khi không có next limit)
     lv_obj_t *camera_circle;         // nền vàng
@@ -124,6 +126,29 @@ static void set_big_circle_text(lv_obj_t *label, const char *text, bool is_numbe
     lv_label_set_text(label, text);
 }
 
+// Không có font bold riêng (chỉ có vi_14/vi_20/speed_64, không có biến thể
+// đậm — không có công cụ tạo font trong môi trường này để build thêm) nên
+// "to hơn + đậm hơn" cho chữ nhiệt độ (thời tiết) được giả lập bằng 2 kỹ
+// thuật kết hợp:
+//  1. To hơn: transform scale (phóng to xung quanh tâm chữ) trên chính label.
+//  2. Đậm hơn: vẽ chồng 1 label thứ 2 giống hệt, lệch 1px, cùng scale —
+//     "poor man's bold" quen thuộc khi không có font đậm.
+#define WEATHER_TEXT_SCALE 384 // 150% (LV_SCALE_NONE = 256 = 100%)
+
+static void apply_weather_text_scale(lv_obj_t *label)
+{
+    lv_obj_set_style_transform_pivot_x(label, lv_pct(50), 0);
+    lv_obj_set_style_transform_pivot_y(label, lv_pct(50), 0);
+    lv_obj_set_style_transform_scale_x(label, WEATHER_TEXT_SCALE, 0);
+    lv_obj_set_style_transform_scale_y(label, WEATHER_TEXT_SCALE, 0);
+}
+
+static void reset_weather_text_scale(lv_obj_t *label)
+{
+    lv_obj_set_style_transform_scale_x(label, LV_SCALE_NONE, 0);
+    lv_obj_set_style_transform_scale_y(label, LV_SCALE_NONE, 0);
+}
+
 void ui_init(lv_display_t *disp)
 {
     lvgl_port_lock(0);
@@ -174,6 +199,14 @@ void ui_init(lv_display_t *disp)
     lv_obj_set_style_text_letter_space(s_ui.limit_number, 0, 0);
     lv_obj_center(s_ui.limit_number);
     set_big_circle_text(s_ui.limit_number, "!", false);
+
+    // Bản sao "giả đậm" của limit_number, chỉ dùng khi hiện nhiệt độ (xem
+    // ui_set_weather()) — lệch 1px, ẩn mặc định.
+    s_ui.weather_temp_bold_main = lv_label_create(s_ui.limit_sign);
+    lv_obj_set_style_text_color(s_ui.weather_temp_bold_main, lv_color_black(), 0);
+    lv_obj_set_style_text_font(s_ui.weather_temp_bold_main, &lv_font_vi_20, 0);
+    lv_obj_align(s_ui.weather_temp_bold_main, LV_ALIGN_CENTER, 1, 0);
+    lv_obj_add_flag(s_ui.weather_temp_bold_main, LV_OBJ_FLAG_HIDDEN);
 
     // Badge thời tiết HÔM NAY - vùng trên của limit_sign, phía trên số/chữ
     // (luôn ở giữa). Ẩn mặc định, chỉ hiện khi không có limit (xem
@@ -262,6 +295,14 @@ void ui_init(lv_display_t *disp)
     lv_obj_set_style_text_font(s_ui.next_limit_number, &lv_font_vi_20, 0);
     lv_obj_center(s_ui.next_limit_number);
     lv_label_set_text(s_ui.next_limit_number, "!");
+
+    // Bản sao "giả đậm" của next_limit_number, chỉ dùng khi hiện nhiệt độ
+    // (xem ui_set_weather()) — lệch 1px, ẩn mặc định.
+    s_ui.weather_temp_bold_next = lv_label_create(s_ui.next_limit_circle);
+    lv_obj_set_style_text_color(s_ui.weather_temp_bold_next, lv_color_black(), 0);
+    lv_obj_set_style_text_font(s_ui.weather_temp_bold_next, &lv_font_vi_20, 0);
+    lv_obj_align(s_ui.weather_temp_bold_next, LV_ALIGN_CENTER, 1, 0);
+    lv_obj_add_flag(s_ui.weather_temp_bold_next, LV_OBJ_FLAG_HIDDEN);
 
     // Badge thời tiết NGÀY MAI - vùng trên của next_limit_circle. Ẩn mặc
     // định, chỉ hiện khi không có next limit (xem ui_set_weather()). Lưu ý:
@@ -361,11 +402,15 @@ void ui_car_update(uint16_t speed_kmh, uint16_t limit_kmh)
     if (limit_kmh > 0) {
         snprintf(buf, sizeof(buf), "%u", (unsigned)limit_kmh);
         set_big_circle_text(s_ui.limit_number, buf, true);
+        reset_weather_text_scale(s_ui.limit_number);
         lv_obj_add_flag(s_ui.weather_icon_main, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_ui.weather_temp_bold_main, LV_OBJ_FLAG_HIDDEN);
     } else {
         // "!" tạm thời — ui_set_weather() (gọi ngay sau, cùng chu kỳ VMSX)
-        // sẽ thay bằng thời tiết hôm nay nếu có.
+        // sẽ thay bằng thời tiết hôm nay nếu có (áp lại scale khi đó).
         set_big_circle_text(s_ui.limit_number, "!", false);
+        reset_weather_text_scale(s_ui.limit_number);
+        lv_obj_add_flag(s_ui.weather_temp_bold_main, LV_OBJ_FLAG_HIDDEN);
     }
     lv_obj_clear_flag(s_ui.limit_sign, LV_OBJ_FLAG_HIDDEN);
     s_last_limit_kmh = limit_kmh;
@@ -604,11 +649,15 @@ void ui_set_next_alert(int16_t next_limit_kmh, int32_t next_limit_distance_m, in
     if (next_limit_kmh > 0) {
         snprintf(buf, sizeof(buf), "%d", (int)next_limit_kmh);
         lv_label_set_text(s_ui.next_limit_number, buf);
+        reset_weather_text_scale(s_ui.next_limit_number);
         lv_obj_add_flag(s_ui.weather_icon_next, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(s_ui.weather_temp_bold_next, LV_OBJ_FLAG_HIDDEN);
     } else {
         // "!" tạm thời — ui_set_weather() (gọi ngay sau, cùng chu kỳ VMSX)
-        // sẽ thay bằng thời tiết ngày mai nếu có.
+        // sẽ thay bằng thời tiết ngày mai nếu có (áp lại scale khi đó).
         lv_label_set_text(s_ui.next_limit_number, "!");
+        reset_weather_text_scale(s_ui.next_limit_number);
+        lv_obj_add_flag(s_ui.weather_temp_bold_next, LV_OBJ_FLAG_HIDDEN);
     }
     s_last_next_limit_kmh = next_limit_kmh;
 
@@ -652,6 +701,10 @@ void ui_set_weather(bool today_valid, int8_t today_temp_c, uint8_t today_conditi
         if (today_valid) {
             snprintf(buf, sizeof(buf), "%d°", (int)today_temp_c);
             set_big_circle_text(s_ui.limit_number, buf, false);
+            apply_weather_text_scale(s_ui.limit_number);
+            lv_label_set_text(s_ui.weather_temp_bold_main, buf);
+            apply_weather_text_scale(s_ui.weather_temp_bold_main);
+            lv_obj_clear_flag(s_ui.weather_temp_bold_main, LV_OBJ_FLAG_HIDDEN);
             lv_obj_set_style_bg_color(s_ui.weather_icon_main, weather_condition_color(today_condition), 0);
             lv_obj_clear_flag(s_ui.weather_icon_main, LV_OBJ_FLAG_HIDDEN);
         } else {
@@ -663,6 +716,10 @@ void ui_set_weather(bool today_valid, int8_t today_temp_c, uint8_t today_conditi
         if (tomorrow_valid) {
             snprintf(buf, sizeof(buf), "%d°", (int)tomorrow_temp_c);
             lv_label_set_text(s_ui.next_limit_number, buf);
+            apply_weather_text_scale(s_ui.next_limit_number);
+            lv_label_set_text(s_ui.weather_temp_bold_next, buf);
+            apply_weather_text_scale(s_ui.weather_temp_bold_next);
+            lv_obj_clear_flag(s_ui.weather_temp_bold_next, LV_OBJ_FLAG_HIDDEN);
             lv_obj_set_style_bg_color(s_ui.weather_icon_next, weather_condition_color(tomorrow_condition), 0);
             lv_obj_clear_flag(s_ui.weather_icon_next, LV_OBJ_FLAG_HIDDEN);
         } else {
