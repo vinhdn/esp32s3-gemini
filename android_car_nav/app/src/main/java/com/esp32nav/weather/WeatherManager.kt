@@ -33,6 +33,12 @@ class WeatherManager(private val context: Context) {
         const val CONDITION_STORM = 3
         const val CONDITION_SNOW = 4
 
+        private const val KEY_TODAY_TEMP = "weather_today_temp"
+        private const val KEY_TODAY_COND = "weather_today_cond"
+        private const val KEY_TOMORROW_TEMP = "weather_tomorrow_temp"
+        private const val KEY_TOMORROW_COND = "weather_tomorrow_cond"
+        private const val KEY_FETCH_AT = "weather_fetch_at"
+
         // Rut gon WMO weather code (Open-Meteo) ve 5 nhom hien thi duoc bang
         // 1 icon mau don gian tren board (xem ui_screens.c).
         private fun wmoToCondition(code: Int): Int = when (code) {
@@ -45,23 +51,35 @@ class WeatherManager(private val context: Context) {
         }
     }
 
+    // SharedPreferences riêng — giữ lại kết quả fetch thành công gần nhất
+    // qua các lần process bị kill/restart (force-stop, reinstall khi test,
+    // Android tự kill service nền...). Trước đây currentTempC/... chỉ nằm
+    // trong RAM (@Volatile var) nên MỖI LẦN process mới phải chờ fetch lại
+    // từ đầu — nếu lúc đó lastKnownLocation() trả về null (chưa có fix
+    // GPS/network nào trong bộ nhớ đệm hệ thống, hay gặp khi vừa khởi động
+    // lại máy/app) thì thời tiết biến mất hẳn cho tới khi có location, dễ
+    // bị hiểu nhầm là "mất thông tin thời tiết".
+    private val prefs = context.getSharedPreferences("car_nav_prefs", Context.MODE_PRIVATE)
+
     @Volatile
-    var currentTempC: Int? = null
+    var currentTempC: Int? = prefs.getInt(KEY_TODAY_TEMP, Int.MIN_VALUE).takeIf { it != Int.MIN_VALUE }
         private set
 
     @Volatile
-    var currentCondition: Int? = null
+    var currentCondition: Int? = prefs.getInt(KEY_TODAY_COND, -1).takeIf { it >= 0 }
         private set
 
     @Volatile
-    var tomorrowTempC: Int? = null
+    var tomorrowTempC: Int? = prefs.getInt(KEY_TOMORROW_TEMP, Int.MIN_VALUE).takeIf { it != Int.MIN_VALUE }
         private set
 
     @Volatile
-    var tomorrowCondition: Int? = null
+    var tomorrowCondition: Int? = prefs.getInt(KEY_TOMORROW_COND, -1).takeIf { it >= 0 }
         private set
 
-    private var lastFetchAt = 0L
+    // Nạp lại mốc fetch gần nhất từ trước khi process bị kill, để không
+    // spam gọi lại API ngay khi vừa mở app lên nếu vẫn còn trong 15 phút.
+    private var lastFetchAt = prefs.getLong(KEY_FETCH_AT, 0L)
 
     @Volatile
     private var fetching = false
@@ -77,7 +95,11 @@ class WeatherManager(private val context: Context) {
     fun maybeFetch() {
         val now = System.currentTimeMillis()
         if (fetching || now - lastFetchAt < FETCH_INTERVAL_MS) return
-        val location = lastKnownLocation() ?: return
+        val location = lastKnownLocation()
+        if (location == null) {
+            Log.w(TAG, "chưa fetch được: không có vị trí gần nhất (GPS/network/passive đều null)")
+            return
+        }
         fetching = true
         lastFetchAt = now
         scope.launch {
@@ -151,6 +173,13 @@ class WeatherManager(private val context: Context) {
 
             Log.i(TAG, "🌤️ thời tiết: hôm nay ${currentTempC}°C cond=$currentCondition, " +
                 "ngày mai ${tomorrowTempC}°C cond=$tomorrowCondition")
+
+            val editor = prefs.edit().putLong(KEY_FETCH_AT, lastFetchAt)
+            currentTempC?.let { editor.putInt(KEY_TODAY_TEMP, it) }
+            currentCondition?.let { editor.putInt(KEY_TODAY_COND, it) }
+            tomorrowTempC?.let { editor.putInt(KEY_TOMORROW_TEMP, it) }
+            tomorrowCondition?.let { editor.putInt(KEY_TOMORROW_COND, it) }
+            editor.apply()
         } finally {
             conn.disconnect()
         }

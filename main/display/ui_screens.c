@@ -709,6 +709,7 @@ void ui_set_weather(bool today_valid, int8_t today_temp_c, uint8_t today_conditi
             lv_obj_clear_flag(s_ui.weather_icon_main, LV_OBJ_FLAG_HIDDEN);
         } else {
             lv_obj_add_flag(s_ui.weather_icon_main, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(s_ui.weather_temp_bold_main, LV_OBJ_FLAG_HIDDEN);
         }
     }
 
@@ -724,6 +725,7 @@ void ui_set_weather(bool today_valid, int8_t today_temp_c, uint8_t today_conditi
             lv_obj_clear_flag(s_ui.weather_icon_next, LV_OBJ_FLAG_HIDDEN);
         } else {
             lv_obj_add_flag(s_ui.weather_icon_next, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(s_ui.weather_temp_bold_next, LV_OBJ_FLAG_HIDDEN);
         }
     }
 

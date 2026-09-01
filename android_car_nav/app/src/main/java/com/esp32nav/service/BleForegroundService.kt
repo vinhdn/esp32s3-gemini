@@ -61,7 +61,11 @@ class BleForegroundService : Service() {
      */
     private fun observeBleState() {
         val app = application as? CarNavApplication ?: return
-        app.bleManager.bleState.onEach { state ->
+        // imageRelay.bleState la nguon trang thai KET NOI THAT (dung ten thiet
+        // bi "VIETMAP_HUD_H50"). bleManager (legacy) target sai ten
+        // "VIETMAP_HUD_H1X" nen khong bao gio connect duoc -> notification
+        // luon ket qua Scanning/Disconnected neu con doc tu do.
+        app.imageRelay.bleState.onEach { state ->
             val status = when (state.connectionState) {
                 BleConnectionState.CONNECTED -> "Connected to ${state.deviceName}"
                 BleConnectionState.CONNECTING -> "Connecting..."
@@ -100,10 +104,11 @@ class BleForegroundService : Service() {
             Log.i(TAG, "Service restarted, auto-reconnecting BLE...")
             val app = application as? CarNavApplication
             if (app != null) {
-                val state = app.bleManager.bleState.value.connectionState
+                val state = app.imageRelay.bleState.value.connectionState
                 if (state == BleConnectionState.DISCONNECTED) {
                     app.bleManager.setAutoReconnect(true)
                     app.bleManager.startScan()
+                    app.imageRelay.start()
                 }
             }
         }

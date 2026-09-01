@@ -167,5 +167,17 @@ void lcd_display_set_hud_flip(bool flipped)
     // khong lien quan che do HUD) de bat/tat dung nghia; mirror_y giu
     // nguyen huong goc.
     esp_lcd_panel_mirror(s_panel, BOARD_LCD_MIRROR_X ^ flipped, BOARD_LCD_MIRROR_Y);
+
+    // esp_lcd_panel_mirror() chi doi MADCTL cho cac lan FLUSH TIEP THEO.
+    // LVGL chi flush lai vung da bi invalidate; noi dung da ve san trong GRAM
+    // cua panel van giu nguyen huong cu cho toi khi co widget nao do thay doi.
+    // Vi vay switch tu app (khong reboot) se hien SAI/lop huong cu-moi cho
+    // toi khi toan bo man hinh duoc ve lai. Ep invalidate toan man hinh de
+    // LVGL flush lai TOAN BO ngay lap tuc duoi MADCTL moi, giong nhu luc boot.
+    if (s_lvgl_disp && lvgl_port_lock(0)) {
+        lv_obj_invalidate(lv_display_get_screen_active(s_lvgl_disp));
+        lvgl_port_unlock();
+    }
+
     ESP_LOGI(TAG, "HUD flip (mirror ngang): %s", flipped ? "BAT" : "TAT");
 }
