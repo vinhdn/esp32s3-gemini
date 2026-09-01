@@ -71,6 +71,10 @@ typedef struct {
 
 typedef void (*waze_hud_vehicle_cb_t)(const vehicle_data_t *data, void *ctx);
 
+// Callback nhan lenh bat/tat che do HUD (lat man hinh 180 do), tu frame
+// "VHUD" - xem lenh bat/tat trong app_settings.kt/SettingsScreen.kt.
+typedef void (*waze_hud_flip_cb_t)(bool flipped, void *ctx);
+
 // Khoi tao NimBLE host + GATT server HLP + bat dau advertise.
 esp_err_t waze_hud_ble_start(waze_hud_data_cb_t cb, void *ctx);
 
@@ -79,6 +83,9 @@ void waze_hud_ble_set_nav_cb(waze_hud_nav_cb_t cb, void *ctx);
 
 // Dat callback nhan thong tin xe (OBD-II).
 void waze_hud_ble_set_vehicle_cb(waze_hud_vehicle_cb_t cb, void *ctx);
+
+// Dat callback nhan lenh bat/tat che do HUD.
+void waze_hud_ble_set_hud_flip_cb(waze_hud_flip_cb_t cb, void *ctx);
 
 // Dung + giai phong toan bo tai nguyen NimBLE.
 void waze_hud_ble_stop(void);

@@ -51,6 +51,9 @@ static void *s_nav_cb_ctx;
 static waze_hud_vehicle_cb_t s_vehicle_cb;
 static void *s_vehicle_cb_ctx;
 
+static waze_hud_flip_cb_t s_hud_flip_cb;
+static void *s_hud_flip_cb_ctx;
+
 static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t s_tx_handle;
 static uint16_t s_rx_handle;
@@ -559,6 +562,43 @@ static int access_cb(uint16_t conn_handle, uint16_t attr_handle,
                 return 0;
             }
 
+            // Frame lenh "VHUD" (7 byte) - bat/tat che do HUD (lat man hinh
+            // 180 do de phan chieu len kinh lai), gui khi user bat/tat trong
+            // app Android (khong phai frame lien tuc nhu VMSX, chi gui khi
+            // doi trang thai):
+            //   0..3  magic "VHUD"
+            //   4     version = 1
+            //   5     flipped (0/1)
+            //   6     XOR(byte 0..5)
+            static const uint8_t vhud_magic[] = { 'V', 'H', 'U', 'D' };
+            if (length >= sizeof(vhud_magic) &&
+                memcmp(s_last_h50_value, vhud_magic, sizeof(vhud_magic)) == 0) {
+                if (length != 7) {
+                    ESP_LOGW(TAG, "VHUD bo qua: do dai %u, can 7 byte", (unsigned)length);
+                    return 0;
+                }
+                if (s_last_h50_value[4] != 1) {
+                    ESP_LOGW(TAG, "VHUD bo qua: version %u khong ho tro",
+                             (unsigned)s_last_h50_value[4]);
+                    return 0;
+                }
+                uint8_t checksum = 0;
+                for (size_t i = 0; i < 6; ++i) {
+                    checksum ^= s_last_h50_value[i];
+                }
+                if (checksum != s_last_h50_value[6]) {
+                    ESP_LOGW(TAG, "VHUD bo qua: checksum nhan=0x%02x tinh=0x%02x",
+                             s_last_h50_value[6], checksum);
+                    return 0;
+                }
+                bool flipped = s_last_h50_value[5] != 0;
+                ESP_LOGI(TAG, "VHUD hop le: flipped=%d", (int)flipped);
+                if (s_hud_flip_cb) {
+                    s_hud_flip_cb(flipped, s_hud_flip_cb_ctx);
+                }
+                return 0;
+            }
+
             // Vietmap H50 gui frame binary proprietary (thuong 16 byte) vao
             // 0x9ABC. Giu logic cu: READ tra frame gan nhat va notify 0x1234.
             ESP_LOGI(TAG, "H50 WRITE 0x9ABC (%u byte), response qua 0x1234", (unsigned)length);
@@ -862,4 +902,10 @@ void waze_hud_ble_set_vehicle_cb(waze_hud_vehicle_cb_t cb, void *ctx)
 {
     s_vehicle_cb = cb;
     s_vehicle_cb_ctx = ctx;
+}
+
+void waze_hud_ble_set_hud_flip_cb(waze_hud_flip_cb_t cb, void *ctx)
+{
+    s_hud_flip_cb = cb;
+    s_hud_flip_cb_ctx = ctx;
 }

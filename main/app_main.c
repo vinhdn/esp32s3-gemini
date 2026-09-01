@@ -137,6 +137,14 @@ static void on_vehicle_data(const vehicle_data_t *vd, void *ctx)
     ui_vehicle_update(vd);
 }
 
+// ---- Callback: bat/tat che do HUD (lat man hinh 180 do), gui tu app khi
+// user bat/tat cong tac trong Settings ----
+static void on_hud_flip(bool flipped, void *ctx)
+{
+    lcd_display_set_hud_flip(flipped);
+    nvs_settings_set_hud_flip(flipped);
+}
+
 // ---- Callback tu buttons ----
 static void on_button_event(button_event_t event, void *ctx)
 {
@@ -176,6 +184,9 @@ void app_main(void)
 
     ESP_ERROR_CHECK(status_led_init());
     ESP_ERROR_CHECK(lcd_display_init());
+    // Khoi phuc che do HUD (lat man hinh) da luu tu lan bat/tat gan nhat -
+    // board tu nho, khong can dien thoai gui lai moi lan khoi dong.
+    lcd_display_set_hud_flip(nvs_settings_get_hud_flip());
     ui_init(lcd_display_get_lvgl_disp());
     // Image stream: gan 2 canvas TRON lam con cua next_limit_circle/
     // camera_circle (ui_screens.c) - hien dung vi tri khi Android gui icon
@@ -208,6 +219,7 @@ void app_main(void)
     } else {
         waze_hud_ble_set_nav_cb(on_nav_data, NULL);
         waze_hud_ble_set_vehicle_cb(on_vehicle_data, NULL);
+        waze_hud_ble_set_hud_flip_cb(on_hud_flip, NULL);
     }
     log_heap_checkpoint("ble_start");
 

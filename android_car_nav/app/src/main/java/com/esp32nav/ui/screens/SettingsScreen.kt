@@ -18,7 +18,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.esp32nav.CarNavApplication
 import com.esp32nav.ble.BleManager
+import com.esp32nav.carhost.VhudFrame
 import com.esp32nav.obd.ObdManager
 import com.esp32nav.service.NavigationListenerService
 
@@ -28,10 +30,13 @@ import com.esp32nav.service.NavigationListenerService
 fun SettingsScreen(
     bleManager: BleManager,
     obdManager: ObdManager,
+    application: CarNavApplication,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
     var autoReconnect by remember { mutableStateOf(true) }
+    val hudPrefs = remember { context.getSharedPreferences("car_nav_prefs", Context.MODE_PRIVATE) }
+    var hudFlip by remember { mutableStateOf(hudPrefs.getBoolean("hud_flip", false)) }
     val notificationAccessEnabled = remember { isNotificationAccessEnabled(context) }
     val obdState by obdManager.connectionState.collectAsState()
 
@@ -209,6 +214,37 @@ fun SettingsScreen(
                             onCheckedChange = {
                                 autoReconnect = it
                                 bleManager.setAutoReconnect(it)
+                            }
+                        )
+                    }
+                }
+            }
+
+            // HUD (lật màn hình cho kính lái)
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Chế độ HUD (kính lái)", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "Lật hình 180° trên board — đặt board ngửa lên táp-lô, " +
+                                    "ảnh phản chiếu qua kính lái sẽ hiện đúng chiều",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                            )
+                        }
+                        Switch(
+                            checked = hudFlip,
+                            onCheckedChange = {
+                                hudFlip = it
+                                hudPrefs.edit().putBoolean("hud_flip", it).apply()
+                                application.imageRelay.sendRawFrame(VhudFrame.build(it))
                             }
                         )
                     }

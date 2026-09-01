@@ -7,6 +7,7 @@
 static const char *TAG = "nvs_settings";
 static const char *NVS_NAMESPACE = "app_cfg";
 static const char *KEY_VOLUME = "volume";
+static const char *KEY_HUD_FLIP = "hud_flip";
 
 #define DEFAULT_VOLUME_PERCENT 60
 
@@ -43,6 +44,32 @@ esp_err_t nvs_settings_set_volume(uint8_t volume_percent)
         return err;
     }
     err = nvs_set_u8(handle, KEY_VOLUME, volume_percent);
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+    return err;
+}
+
+bool nvs_settings_get_hud_flip(void)
+{
+    nvs_handle_t handle;
+    uint8_t flipped = 0;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle) == ESP_OK) {
+        nvs_get_u8(handle, KEY_HUD_FLIP, &flipped);
+        nvs_close(handle);
+    }
+    return flipped != 0;
+}
+
+esp_err_t nvs_settings_set_hud_flip(bool flipped)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_u8(handle, KEY_HUD_FLIP, flipped ? 1 : 0);
     if (err == ESP_OK) {
         err = nvs_commit(handle);
     }

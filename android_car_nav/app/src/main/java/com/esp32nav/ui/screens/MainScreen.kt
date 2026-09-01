@@ -59,6 +59,7 @@ fun MainScreen(
         SettingsScreen(
             bleManager = bleManager,
             obdManager = obdManager,
+            application = application,
             onBack = { showSettings = false }
         )
     } else {

@@ -152,3 +152,20 @@ lv_display_t *lcd_display_get_lvgl_disp(void)
 {
     return s_lvgl_disp;
 }
+
+void lcd_display_set_hud_flip(bool flipped)
+{
+    if (!s_lvgl_disp) {
+        return;
+    }
+    // Xoay them 180 do o tang LVGL (doc lap voi mirror_x/mirror_y/swap_xy
+    // da co tu luc lcd_display_init() - do la huong GOC cua panel theo
+    // cach han board nay, khong lien quan che do HUD). LVGL tu xu ly viec
+    // doi toa do khi flush, khong can buffer/panel rieng cho 180 do.
+    if (lvgl_port_lock(100)) {
+        lv_display_set_rotation(s_lvgl_disp,
+            flipped ? LV_DISPLAY_ROTATION_180 : LV_DISPLAY_ROTATION_0);
+        lvgl_port_unlock();
+    }
+    ESP_LOGI(TAG, "HUD flip: %s", flipped ? "BAT (180 do)" : "TAT");
+}
