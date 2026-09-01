@@ -155,17 +155,17 @@ lv_display_t *lcd_display_get_lvgl_disp(void)
 
 void lcd_display_set_hud_flip(bool flipped)
 {
-    if (!s_lvgl_disp) {
+    if (!s_panel) {
         return;
     }
-    // Xoay them 180 do o tang LVGL (doc lap voi mirror_x/mirror_y/swap_xy
-    // da co tu luc lcd_display_init() - do la huong GOC cua panel theo
-    // cach han board nay, khong lien quan che do HUD). LVGL tu xu ly viec
-    // doi toa do khi flush, khong can buffer/panel rieng cho 180 do.
-    if (lvgl_port_lock(100)) {
-        lv_display_set_rotation(s_lvgl_disp,
-            flipped ? LV_DISPLAY_ROTATION_180 : LV_DISPLAY_ROTATION_0);
-        lvgl_port_unlock();
-    }
-    ESP_LOGI(TAG, "HUD flip: %s", flipped ? "BAT (180 do)" : "TAT");
+    // MIRROR NGANG (trai-phai), KHONG PHAI xoay 180 do - xoay 180 se lat ca
+    // truc doc (hien nguoc tren-duoi), khac voi anh guong that (chi lat
+    // trai-phai, tren-duoi giu nguyen). Dung thang esp_lcd_panel_mirror() de
+    // dieu khien MADCTL cua panel (ST7789) o tang phan cung - hoat dong doc
+    // lap voi buffer/toa do cua LVGL, khong can invalidate/xoay gi them.
+    // mirror_x XOR voi BOARD_LCD_MIRROR_X (huong GOC luc lcd_display_init(),
+    // khong lien quan che do HUD) de bat/tat dung nghia; mirror_y giu
+    // nguyen huong goc.
+    esp_lcd_panel_mirror(s_panel, BOARD_LCD_MIRROR_X ^ flipped, BOARD_LCD_MIRROR_Y);
+    ESP_LOGI(TAG, "HUD flip (mirror ngang): %s", flipped ? "BAT" : "TAT");
 }

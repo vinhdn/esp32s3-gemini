@@ -233,7 +233,7 @@ fun SettingsScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Chế độ HUD (kính lái)", style = MaterialTheme.typography.titleMedium)
                             Text(
-                                "Lật hình 180° trên board — đặt board ngửa lên táp-lô, " +
+                                "Lật gương (trái-phải) trên board — đặt board trên táp-lô, " +
                                     "ảnh phản chiếu qua kính lái sẽ hiện đúng chiều",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
