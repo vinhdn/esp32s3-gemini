@@ -434,14 +434,15 @@ static int access_cb(uint16_t conn_handle, uint16_t attr_handle,
                 return 0;
             }
 
-            // Frame mo rong "VMSX" v2 (16 byte) tu VietmapAccessibilityService.kt:
+            // Frame mo rong "VMSX" v3 (20 byte) tu VietmapAccessibilityService.kt:
             //   0..3  magic "VMSX"
-            //   4     version = 2
+            //   4     version = 3
             //   5     speedLimit (km/h)
             //   6     currentSpeed (km/h)
             //   7     flags: bit0 overSpeed, bit1 underMinSpeedLimit,
             //               bit2 hudConnected, bit3 nextLimit hop le,
-            //               bit4 camera hop le
+            //               bit4 camera hop le, bit5 thoi tiet hom nay hop le,
+            //               bit6 thoi tiet ngay mai hop le
             //   8     minSpeedLimit (km/h)
             //   9     navigationState
             //   10-11 khoang cach toi bien bao toc do sap toi (uint16 BE, met)
@@ -450,28 +451,32 @@ static int access_cb(uint16_t conn_handle, uint16_t attr_handle,
             //   13-14 khoang cach toi camera (uint16 BE, met) - khu canh bao
             //         RIENG (sq_upcoming_alert_right), doc lap voi bien bao
             //         sap toi ben tren (sq_upcoming_alert_left)
-            //   15    XOR(byte 0..14)
+            //   15    nhiet do hom nay (int8, do C) - chi hop le neu bit5
+            //   16    dieu kien thoi tiet hom nay (0=nang,1=may,2=mua,3=giong,4=tuyet/suong)
+            //   17    nhiet do ngay mai (int8, do C) - chi hop le neu bit6
+            //   18    dieu kien thoi tiet ngay mai (cung thang tren)
+            //   19    XOR(byte 0..18)
             // Cung khong echo qua 0x1234 nhu VMSL.
             static const uint8_t vmsx_magic[] = { 'V', 'M', 'S', 'X' };
             if (length >= sizeof(vmsx_magic) &&
                 memcmp(s_last_h50_value, vmsx_magic, sizeof(vmsx_magic)) == 0) {
-                if (length != 16) {
-                    ESP_LOGW(TAG, "VMSX bo qua: do dai %u, can 16 byte", (unsigned)length);
+                if (length != 20) {
+                    ESP_LOGW(TAG, "VMSX bo qua: do dai %u, can 20 byte", (unsigned)length);
                     return 0;
                 }
-                if (s_last_h50_value[4] != 2) {
+                if (s_last_h50_value[4] != 3) {
                     ESP_LOGW(TAG, "VMSX bo qua: version %u khong ho tro",
                              (unsigned)s_last_h50_value[4]);
                     return 0;
                 }
 
                 uint8_t checksum = 0;
-                for (size_t i = 0; i < 15; ++i) {
+                for (size_t i = 0; i < 19; ++i) {
                     checksum ^= s_last_h50_value[i];
                 }
-                if (checksum != s_last_h50_value[15]) {
+                if (checksum != s_last_h50_value[19]) {
                     ESP_LOGW(TAG, "VMSX bo qua: checksum nhan=0x%02x tinh=0x%02x",
-                             s_last_h50_value[15], checksum);
+                             s_last_h50_value[19], checksum);
                     return 0;
                 }
 
@@ -485,12 +490,18 @@ static int access_cb(uint16_t conn_handle, uint16_t attr_handle,
                 uint16_t next_limit_kmh     = s_last_h50_value[12];
                 uint16_t camera_dist        = ((uint16_t)s_last_h50_value[13] << 8) |
                                                (uint16_t)s_last_h50_value[14];
+                int8_t   today_temp_c       = (int8_t)s_last_h50_value[15];
+                uint8_t  today_condition    = s_last_h50_value[16];
+                int8_t   tomorrow_temp_c    = (int8_t)s_last_h50_value[17];
+                uint8_t  tomorrow_condition = s_last_h50_value[18];
 
                 bool over_speed        = (flags & 0x01) != 0;
                 bool under_min         = (flags & 0x02) != 0;
                 bool hud_linked        = (flags & 0x04) != 0;
                 bool next_limit_valid  = (flags & 0x08) != 0;
                 bool camera_valid      = (flags & 0x10) != 0;
+                bool today_weather_ok  = (flags & 0x20) != 0;
+                bool tomorrow_weather_ok = (flags & 0x40) != 0;
 
                 ESP_LOGI(TAG, "VMSX hop le: limit=%u speed=%u min=%u nav_state=%u "
                               "over=%d under_min=%d hud=%d",
@@ -502,6 +513,11 @@ static int access_cb(uint16_t conn_handle, uint16_t attr_handle,
                 }
                 if (camera_valid) {
                     ESP_LOGI(TAG, "  -> camera: cach %u m", camera_dist);
+                }
+                if (today_weather_ok || tomorrow_weather_ok) {
+                    ESP_LOGI(TAG, "  -> thoi tiet: hom nay %dC (cond=%u) ngay mai %dC (cond=%u)",
+                             (int)today_temp_c, (unsigned)today_condition,
+                             (int)tomorrow_temp_c, (unsigned)tomorrow_condition);
                 }
 
                 if (s_data_cb) {
@@ -523,6 +539,12 @@ static int access_cb(uint16_t conn_handle, uint16_t attr_handle,
                     if (camera_valid) {
                         nav.camera_distance_m = (int32_t)camera_dist;
                     }
+                    nav.today_weather_valid = today_weather_ok;
+                    nav.today_weather_temp_c = today_temp_c;
+                    nav.today_weather_condition = today_condition;
+                    nav.tomorrow_weather_valid = tomorrow_weather_ok;
+                    nav.tomorrow_weather_temp_c = tomorrow_temp_c;
+                    nav.tomorrow_weather_condition = tomorrow_condition;
                     if (min_limit > 0) {
                         snprintf(nav.instruction, sizeof(nav.instruction),
                                  "Toc do toi thieu %u km/h%s", min_limit,

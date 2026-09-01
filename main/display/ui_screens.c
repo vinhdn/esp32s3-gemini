@@ -37,6 +37,7 @@ typedef struct {
     // Speed limit sign (TOP RIGHT, nhỏ ~60x60)
     lv_obj_t *limit_sign;
     lv_obj_t *limit_number;
+    lv_obj_t *weather_icon_main;     // badge thời tiết HÔM NAY (khi không có limit)
 
     // Navigation (CENTER - phần chính)
     lv_obj_t *nav_direction_img;     // Image icon hướng rẽ (32x32 bitmap)
@@ -53,6 +54,7 @@ typedef struct {
     lv_obj_t *next_limit_circle;
     lv_obj_t *next_limit_number;
     lv_obj_t *next_limit_distance_label;  // khoảng cách, chữ nhỏ dưới vòng tròn
+    lv_obj_t *weather_icon_next;     // badge thời tiết NGÀY MAI (khi không có next limit)
     lv_obj_t *camera_circle;         // nền vàng
     lv_obj_t *camera_number;
     lv_obj_t *camera_distance_label;      // khoảng cách, chữ nhỏ dưới vòng tròn
@@ -62,6 +64,12 @@ typedef struct {
 } ui_widgets_t;
 
 static ui_widgets_t s_ui;
+
+// Cache giá trị limit gần nhất — để ui_set_weather() (gọi SAU ui_car_update/
+// ui_set_next_alert trong cùng 1 chu kỳ VMSX, xem app_main.c) biết có nên
+// hiện thời tiết THAY số hay không, mà không cần đổi chữ ký các hàm đó.
+static uint16_t s_last_limit_kmh;
+static int16_t s_last_next_limit_kmh;
 
 static lv_timer_t *s_bg_flash_timer = NULL;
 static lv_timer_t *s_limit_blink_timer = NULL;
@@ -122,6 +130,12 @@ void ui_init(lv_display_t *disp)
 
     lv_obj_t *scr = lv_display_get_screen_active(disp);
     lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
+    // Man hinh scrollable mac dinh cua LVGL - vai widget (label/canvas) nam
+    // sat/vuot mep duoi (y~222-238 tren canvas 240) khien LVGL coi noi dung
+    // la "co the scroll" va tu ve 1 vach scrollbar doc ben phai man hinh.
+    // Board khong can scroll gi ca - tat han.
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(scr, LV_SCROLLBAR_MODE_OFF);
     s_ui.screen = scr;
 
     // === STATUS BAR (top, y=2) ===
@@ -160,6 +174,17 @@ void ui_init(lv_display_t *disp)
     lv_obj_set_style_text_letter_space(s_ui.limit_number, 0, 0);
     lv_obj_center(s_ui.limit_number);
     set_big_circle_text(s_ui.limit_number, "!", false);
+
+    // Badge thời tiết HÔM NAY - vùng trên của limit_sign, phía trên số/chữ
+    // (luôn ở giữa). Ẩn mặc định, chỉ hiện khi không có limit (xem
+    // ui_set_weather()).
+    s_ui.weather_icon_main = lv_obj_create(s_ui.limit_sign);
+    lv_obj_remove_style_all(s_ui.weather_icon_main);
+    lv_obj_set_size(s_ui.weather_icon_main, 28, 28);
+    lv_obj_set_style_radius(s_ui.weather_icon_main, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(s_ui.weather_icon_main, LV_OPA_COVER, 0);
+    lv_obj_align(s_ui.weather_icon_main, LV_ALIGN_TOP_MID, 0, 16);
+    lv_obj_add_flag(s_ui.weather_icon_main, LV_OBJ_FLAG_HIDDEN);
 
     // === NAVIGATION DIRECTION (DƯỚI speed circles, y=100+) ===
     // Dùng lv_image 32x32 cho icon hướng rẽ rõ ràng
@@ -238,6 +263,18 @@ void ui_init(lv_display_t *disp)
     lv_obj_center(s_ui.next_limit_number);
     lv_label_set_text(s_ui.next_limit_number, "!");
 
+    // Badge thời tiết NGÀY MAI - vùng trên của next_limit_circle. Ẩn mặc
+    // định, chỉ hiện khi không có next limit (xem ui_set_weather()). Lưu ý:
+    // icon cảnh báo thật (img_stream.c, khi có) đè lên TRÊN badge này khi
+    // hiện - hợp lý vì icon thật ưu tiên hơn thời tiết.
+    s_ui.weather_icon_next = lv_obj_create(s_ui.next_limit_circle);
+    lv_obj_remove_style_all(s_ui.weather_icon_next);
+    lv_obj_set_size(s_ui.weather_icon_next, 14, 14);
+    lv_obj_set_style_radius(s_ui.weather_icon_next, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(s_ui.weather_icon_next, LV_OPA_COVER, 0);
+    lv_obj_align(s_ui.weather_icon_next, LV_ALIGN_TOP_MID, 0, 4);
+    lv_obj_add_flag(s_ui.weather_icon_next, LV_OBJ_FLAG_HIDDEN);
+
     // Khoảng cách tới biển báo sắp tới đó - chữ nhỏ ngay dưới vòng tròn.
     s_ui.next_limit_distance_label = lv_label_create(scr);
     lv_obj_set_style_text_color(s_ui.next_limit_distance_label, lv_color_hex(0xCCCCCC), 0);
@@ -308,6 +345,8 @@ void ui_show_car_mode(void)
     lv_label_set_text(s_ui.next_limit_distance_label, "--");
     lv_label_set_text(s_ui.camera_number, "--");
     lv_label_set_text(s_ui.camera_distance_label, "--");
+    s_last_limit_kmh = 0;
+    s_last_next_limit_kmh = 0;
     lvgl_port_unlock();
     ui_set_ble_connected(false);
 }
@@ -322,10 +361,14 @@ void ui_car_update(uint16_t speed_kmh, uint16_t limit_kmh)
     if (limit_kmh > 0) {
         snprintf(buf, sizeof(buf), "%u", (unsigned)limit_kmh);
         set_big_circle_text(s_ui.limit_number, buf, true);
+        lv_obj_add_flag(s_ui.weather_icon_main, LV_OBJ_FLAG_HIDDEN);
     } else {
+        // "!" tạm thời — ui_set_weather() (gọi ngay sau, cùng chu kỳ VMSX)
+        // sẽ thay bằng thời tiết hôm nay nếu có.
         set_big_circle_text(s_ui.limit_number, "!", false);
     }
     lv_obj_clear_flag(s_ui.limit_sign, LV_OBJ_FLAG_HIDDEN);
+    s_last_limit_kmh = limit_kmh;
 
     // Tốc độ hiện tại (trong circle)
     snprintf(buf, sizeof(buf), "%u", (unsigned)speed_kmh);
@@ -561,9 +604,13 @@ void ui_set_next_alert(int16_t next_limit_kmh, int32_t next_limit_distance_m, in
     if (next_limit_kmh > 0) {
         snprintf(buf, sizeof(buf), "%d", (int)next_limit_kmh);
         lv_label_set_text(s_ui.next_limit_number, buf);
+        lv_obj_add_flag(s_ui.weather_icon_next, LV_OBJ_FLAG_HIDDEN);
     } else {
+        // "!" tạm thời — ui_set_weather() (gọi ngay sau, cùng chu kỳ VMSX)
+        // sẽ thay bằng thời tiết ngày mai nếu có.
         lv_label_set_text(s_ui.next_limit_number, "!");
     }
+    s_last_next_limit_kmh = next_limit_kmh;
 
     format_distance(buf, sizeof(buf), next_limit_distance_m);
     lv_label_set_text(s_ui.next_limit_distance_label, buf);
@@ -571,6 +618,57 @@ void ui_set_next_alert(int16_t next_limit_kmh, int32_t next_limit_distance_m, in
     format_distance(buf, sizeof(buf), camera_distance_m);
     lv_label_set_text(s_ui.camera_distance_label, buf);
     lv_label_set_text(s_ui.camera_number, buf);
+
+    lvgl_port_unlock();
+}
+
+// Mau badge theo dieu kien thoi tiet (0=nang,1=may,2=mua,3=giong,4=tuyet/
+// suong) - khong co bo icon anh rieng nen dung mau lam dau hieu truc quan
+// don gian, nhe cho board.
+static lv_color_t weather_condition_color(uint8_t condition)
+{
+    switch (condition) {
+        case 0: return lv_color_hex(0xFFB800); // nang - vang cam
+        case 2: return lv_color_hex(0x3388DD); // mua - xanh duong
+        case 3: return lv_color_hex(0x6644AA); // giong - tim
+        case 4: return lv_color_hex(0xCCEEFF); // tuyet/suong mu - xanh nhat
+        case 1:
+        default: return lv_color_hex(0xAAAAAA); // may - xam
+    }
+}
+
+// Hien thi thay so trong 2 vong tron khi KHONG co du lieu tuong ung (xem
+// s_last_limit_kmh/s_last_next_limit_kmh, cache boi ui_car_update()/
+// ui_set_next_alert() ngay truoc do trong cung 1 chu ky VMSX). Icon anh
+// canh bao that (img_stream.c), khi co, ve DE LEN TREN badge nay - uu tien
+// hon thoi tiet.
+void ui_set_weather(bool today_valid, int8_t today_temp_c, uint8_t today_condition,
+                     bool tomorrow_valid, int8_t tomorrow_temp_c, uint8_t tomorrow_condition)
+{
+    lvgl_port_lock(0);
+
+    char buf[16];
+    if (s_last_limit_kmh == 0) {
+        if (today_valid) {
+            snprintf(buf, sizeof(buf), "%d°", (int)today_temp_c);
+            set_big_circle_text(s_ui.limit_number, buf, false);
+            lv_obj_set_style_bg_color(s_ui.weather_icon_main, weather_condition_color(today_condition), 0);
+            lv_obj_clear_flag(s_ui.weather_icon_main, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_ui.weather_icon_main, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    if (s_last_next_limit_kmh <= 0) {
+        if (tomorrow_valid) {
+            snprintf(buf, sizeof(buf), "%d°", (int)tomorrow_temp_c);
+            lv_label_set_text(s_ui.next_limit_number, buf);
+            lv_obj_set_style_bg_color(s_ui.weather_icon_next, weather_condition_color(tomorrow_condition), 0);
+            lv_obj_clear_flag(s_ui.weather_icon_next, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_ui.weather_icon_next, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
 
     lvgl_port_unlock();
 }

@@ -743,6 +743,9 @@ class VietmapAccessibilityService : AccessibilityService() {
             return
         }
 
+        // Tự throttle bên trong (15 phút/lần) - gọi mỗi lần quét cũng an toàn.
+        (application as? CarNavApplication)?.weatherManager?.maybeFetch()
+
         val parsedSpeed = currentSpeedText?.trim()?.toIntOrNull() ?: -1
         val speedLimit = speedLimitText?.trim()?.let { if (it == "!") 0 else it.toIntOrNull() } ?: 0
         val nextLimit = nextLimitText?.trim()?.let { if (it == "--") 0 else it.toIntOrNull() } ?: 0
@@ -775,6 +778,7 @@ class VietmapAccessibilityService : AccessibilityService() {
             // comment dòng dưới (và có thể bỏ dòng sendVmsxData ở trên).
             // captureAndSendBubbleImage(window.id)
             sendVmsxData(parsedSpeed, speedLimit, nextLimit, nextLimitDistance, cameraDistance)
+
             // Ảnh icon thật (biển báo/camera) trong warning_alert_image -
             // gửi kèm, chất lượng thấp nhất (demo trước, xem
             // captureAndSendAlertIcons()).
@@ -890,17 +894,26 @@ class VietmapAccessibilityService : AccessibilityService() {
         cameraDistanceM: Int,
     ) {
         val app = application as? CarNavApplication ?: return
+        // Thời tiết hôm nay/ngày mai — board tự quyết định hiển thị số hay
+        // thời tiết (limit>0 luôn ưu tiên số), gửi kèm luôn khi có sẵn.
+        val weather = app.weatherManager
         val frame = VmsxFrame.build(
             speedLimit = speedLimit,
             currentSpeed = currentSpeed.coerceAtLeast(0),
             nextLimitDistanceMeters = nextLimitDistanceM,
             nextLimitSpeedLimit = nextLimit,
             cameraDistanceMeters = cameraDistanceM,
+            todayWeatherTempC = weather.currentTempC,
+            todayWeatherCondition = weather.currentCondition,
+            tomorrowWeatherTempC = weather.tomorrowTempC,
+            tomorrowWeatherCondition = weather.tomorrowCondition,
             overSpeed = speedLimit > 0 && currentSpeed > speedLimit,
             hudConnected = true,
         )
         Log.i(TAG, "📊 VMSX gửi: speed=$currentSpeed limit=$speedLimit nextLimit=$nextLimit " +
-            "nextLimitDist=${nextLimitDistanceM}m cameraDist=${cameraDistanceM}m")
+            "nextLimitDist=${nextLimitDistanceM}m cameraDist=${cameraDistanceM}m " +
+            "weather=${weather.currentTempC}°C/${weather.currentCondition} " +
+            "tomorrow=${weather.tomorrowTempC}°C/${weather.tomorrowCondition}")
         app.imageRelay.sendRawFrame(frame)
     }
 

@@ -117,6 +117,12 @@ static void on_nav_data(const nav_data_t *nav, void *ctx)
     // Bien bao sap toi + camera -> 2 vong tron rieng (ui_set_next_alert),
     // khong con qua nav_state_label (da bo hien thi navState).
     ui_set_next_alert(nav->alert_limit_kmh, nav->alert_distance_m, nav->camera_distance_m);
+    // Thoi tiet THAY so khi khong co du lieu tuong ung - phai goi SAU
+    // ui_set_next_alert() (va sau ui_car_update(), da chay truoc do trong
+    // on_car_data) de cache s_last_limit_kmh/s_last_next_limit_kmh kip cap
+    // nhat trong ui_screens.c.
+    ui_set_weather(nav->today_weather_valid, nav->today_weather_temp_c, nav->today_weather_condition,
+                    nav->tomorrow_weather_valid, nav->tomorrow_weather_temp_c, nav->tomorrow_weather_condition);
 
     if (nav->time_remaining[0] || nav->total_dist[0] || nav->eta[0]) {
         extern void ui_nav_update_meta(const char *time_remaining, const char *total_dist, const char *eta);

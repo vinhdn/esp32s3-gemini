@@ -34,6 +34,14 @@ void ui_nav_clear(void);
 // "!" ; distance_m<=0 => "--" (giong placeholder tren bong bong VietMap Live).
 void ui_set_next_alert(int16_t next_limit_kmh, int32_t next_limit_distance_m, int32_t camera_distance_m);
 
+// Hien thi thoi tiet THAY so trong 2 vong tron khi khong co du lieu toc do
+// gioi han tuong ung (limit_kmh=0 / next_limit_kmh<=0 - xem ui_car_update()/
+// ui_set_next_alert(), phai goi TRUOC ham nay trong cung 1 chu ky VMSX).
+// Hom nay -> vong tron gioi han hien tai, ngay mai -> vong tron bien bao
+// sap toi. *_valid=false -> giu nguyen "!" (chua co du lieu thoi tiet).
+void ui_set_weather(bool today_valid, int8_t today_temp_c, uint8_t today_condition,
+                     bool tomorrow_valid, int8_t tomorrow_temp_c, uint8_t tomorrow_condition);
+
 // Vòng tròn biển báo sắp tới / camera — img_stream.c gắn canvas icon ảnh
 // thật (warning_alert_image từ Android) làm con của các vòng tròn này để
 // hiển thị đúng vị trí, thay vì che cả màn hình.

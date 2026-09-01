@@ -40,6 +40,17 @@ typedef struct {
     int16_t alert_limit_kmh;   // bien bao toc do sap toi (trai)
     int32_t alert_distance_m;  // khoang cach toi bien bao sap toi do
     int32_t camera_distance_m; // khoang cach toi camera (phai) - doc lap
+
+    // Thoi tiet (Open-Meteo, xem WeatherManager.kt) - hien thi THAY vong
+    // tron bien bao khi khong co du lieu toc do gioi han. Hom nay -> vi tri
+    // vong tron gioi han hien tai; ngay mai -> vi tri vong tron bien bao
+    // sap toi. *_valid=false khi chua fetch duoc / khong co vi tri GPS.
+    bool today_weather_valid;
+    int8_t today_weather_temp_c;
+    uint8_t today_weather_condition;   // 0=nang,1=may,2=mua,3=giong,4=tuyet/suong
+    bool tomorrow_weather_valid;
+    int8_t tomorrow_weather_temp_c;
+    uint8_t tomorrow_weather_condition;
 } nav_data_t;
 
 typedef void (*waze_hud_nav_cb_t)(const nav_data_t *nav, void *ctx);

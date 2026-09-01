@@ -10,6 +10,7 @@ import com.esp32nav.obd.ObdManager
 import com.esp32nav.parser.DatMapParser
 import com.esp32nav.stream.MapStreamManager
 import com.esp32nav.vhal.VhalManager
+import com.esp32nav.weather.WeatherManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.text.Normalizer
@@ -32,6 +33,11 @@ class CarNavApplication : Application() {
     // BleManager (giao thức HLP cũ, không khớp firmware hiện tại). Xem
     // esp32/android_car_nav/carhost/ImageRelayBle.kt.
     lateinit var imageRelay: ImageRelayBle
+        private set
+
+    // Thời tiết hiển thị thay vòng tròn biển báo khi không có dữ liệu tốc
+    // độ giới hạn (xem VietmapAccessibilityService.kt).
+    lateinit var weatherManager: WeatherManager
         private set
 
     private val _currentNavData = MutableStateFlow<NavigationData?>(null)
@@ -57,6 +63,7 @@ class CarNavApplication : Application() {
         vhalManager = VhalManager(this)
         imageRelay = ImageRelayBle(this)
         mapStreamManager = MapStreamManager(this, imageRelay)
+        weatherManager = WeatherManager(this)
 
         // Kết nối tới board (BleManager.startScan() + ImageRelayBle.start())
         // CHỈ được khởi động bên trong BleForegroundService (onCreate/onDestroy)
