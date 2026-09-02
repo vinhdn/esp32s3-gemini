@@ -11,6 +11,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import com.esp32nav.CarNavApplication
 import com.esp32nav.carhost.VmsxFrame
+import com.esp32nav.obd.ObdManager
 
 /**
  * Accessibility Service đọc thông số từ Vietmap Live + DatMap.
@@ -752,6 +753,18 @@ class VietmapAccessibilityService : AccessibilityService() {
         val nextLimitDistance = parseDistanceMeters(nextLimitDistanceText)
         val cameraDistance = parseDistanceMeters(cameraDistanceText)
 
+        // Tốc độ hiện tại thật của xe (cảm biến qua OBD-II) chính xác hơn số
+        // VietMap ước lượng từ GPS - nếu đã có ELM327 connected và đọc được
+        // speed hợp lệ thì dùng số đó thay cho parsedSpeed (chỉ cho VMSX gửi
+        // board, không đụng currentSpeed dùng cho UI trong app bên dưới - đó
+        // vẫn nên phản ánh đúng số VietMap đang hiển thị).
+        val obdManager = (application as? CarNavApplication)?.obdManager
+        val obdSpeed = obdManager
+            ?.takeIf { it.connectionState.value == ObdManager.ObdConnectionState.CONNECTED }
+            ?.vehicleData?.value?.speedKmh
+            ?.takeIf { it >= 0 }
+        val effectiveSpeed = obdSpeed ?: parsedSpeed
+
         // currentSpeedLimit/currentSpeed vẫn cập nhật cho UI trong app (xem
         // MainScreen) — không còn dùng để gửi VMSX qua board nữa.
         if (speedLimit > 0) currentSpeedLimit = speedLimit
@@ -759,10 +772,10 @@ class VietmapAccessibilityService : AccessibilityService() {
         lastUpdateTime = System.currentTimeMillis()
         isNavigating = true
 
-        val changed = parsedSpeed != lastVmsxCurrentSpeed || speedLimit != lastVmsxSpeedLimit ||
+        val changed = effectiveSpeed != lastVmsxCurrentSpeed || speedLimit != lastVmsxSpeedLimit ||
             nextLimit != lastVmsxNextLimit || nextLimitDistance != lastVmsxNextLimitDistance ||
             cameraDistance != lastVmsxCameraDistance
-        lastVmsxCurrentSpeed = parsedSpeed
+        lastVmsxCurrentSpeed = effectiveSpeed
         lastVmsxSpeedLimit = speedLimit
         lastVmsxNextLimit = nextLimit
         lastVmsxNextLimitDistance = nextLimitDistance
@@ -777,7 +790,7 @@ class VietmapAccessibilityService : AccessibilityService() {
             // on_nav_data nối lại vào ui_screens.c). Bật lại bằng cách bỏ
             // comment dòng dưới (và có thể bỏ dòng sendVmsxData ở trên).
             // captureAndSendBubbleImage(window.id)
-            sendVmsxData(parsedSpeed, speedLimit, nextLimit, nextLimitDistance, cameraDistance)
+            sendVmsxData(effectiveSpeed, speedLimit, nextLimit, nextLimitDistance, cameraDistance)
 
             // Ảnh icon thật (biển báo/camera) trong warning_alert_image -
             // gửi kèm, chất lượng thấp nhất (demo trước, xem
