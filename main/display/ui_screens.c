@@ -126,6 +126,29 @@ static void set_big_circle_text(lv_obj_t *label, const char *text, bool is_numbe
     lv_label_set_text(label, text);
 }
 
+// speed_label (circle 88x88, font_speed_64) vua khop 1 chu so o scale goc
+// (~36px advance width). 2 chu so (~71px) da sat mep vung noi tiep hinh
+// tron (~80px o chinh giua, hep dan ve 2 dau vi la hinh tron chu khong phai
+// hinh vuong); 3 chu so (~107px) tran han ra ngoai. Thu nho dan qua transform
+// scale (giong ky thuat apply_weather_text_scale) de so luon vua trong khung
+// tron du la 1-3 chu so.
+static void apply_speed_label_scale(lv_obj_t *label, const char *text)
+{
+    size_t digits = strlen(text);
+    int scale;
+    if (digits >= 3) {
+        scale = 166; // ~65%
+    } else if (digits == 2) {
+        scale = 217; // ~85%
+    } else {
+        scale = LV_SCALE_NONE; // 100%
+    }
+    lv_obj_set_style_transform_pivot_x(label, lv_pct(50), 0);
+    lv_obj_set_style_transform_pivot_y(label, lv_pct(50), 0);
+    lv_obj_set_style_transform_scale_x(label, scale, 0);
+    lv_obj_set_style_transform_scale_y(label, scale, 0);
+}
+
 // Không có font bold riêng (chỉ có vi_14/vi_20/speed_64, không có biến thể
 // đậm — không có công cụ tạo font trong môi trường này để build thêm) nên
 // "to hơn + đậm hơn" cho chữ nhiệt độ (thời tiết) được giả lập bằng 2 kỹ
@@ -418,6 +441,7 @@ void ui_car_update(uint16_t speed_kmh, uint16_t limit_kmh)
     // Tốc độ hiện tại (trong circle)
     snprintf(buf, sizeof(buf), "%u", (unsigned)speed_kmh);
     lv_label_set_text(s_ui.speed_label, buf);
+    apply_speed_label_scale(s_ui.speed_label, buf);
 
     // Đổi màu viền circle + số nếu vượt tốc độ
     if (limit_kmh > 0 && speed_kmh > limit_kmh) {
@@ -584,6 +608,7 @@ void ui_vehicle_update(const vehicle_data_t *data)
         char buf[8];
         snprintf(buf, sizeof(buf), "%d", data->speed_kmh);
         lv_label_set_text(s_ui.speed_label, buf);
+        apply_speed_label_scale(s_ui.speed_label, buf);
         lvgl_port_unlock();
     }
 
