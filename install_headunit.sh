@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 # Cài đặt bản APK mới nhất của VietMap Live (đã patch + resign) và CarNav (ESP32 HUD
-# companion app) lên Android head unit qua adb, rồi cấp full quyền cho cả 2 app.
+# companion app, bản RELEASE - ký bằng app/car-nav.jks) lên Android head unit qua
+# adb, rồi cấp full quyền cho cả 2 app.
+#
+# CarNav trỏ tới app-release.apk (không phải app-debug.apk) - build trước khi
+# chạy script này bằng:
+#   cd esp32/android_car_nav && ./gradlew.bat :app:assembleRelease
 #
 # Nếu app đã cài trên máy với signature KHÁC (ví dụ bản gốc chưa patch, hoặc bản
-# patch ký bằng key khác lần trước) thì `adb install -r` sẽ báo lỗi
-# INSTALL_FAILED_UPDATE_INCOMPATIBLE / "signatures do not match" — script tự phát
-# hiện lỗi này, gỡ app cũ rồi cài lại từ đầu (MẤT DATA của app đó, không tránh
-# được vì đây là giới hạn của Android khi đổi signing key).
+# patch ký bằng key khác lần trước, hoặc trước đó cài bản debug rồi giờ chuyển
+# sang bản release - debug/release luôn ký bằng key khác nhau) thì
+# `adb install -r` sẽ báo lỗi INSTALL_FAILED_UPDATE_INCOMPATIBLE / "signatures do
+# not match" — script tự phát hiện lỗi này, gỡ app cũ rồi cài lại từ đầu (MẤT
+# DATA của app đó, không tránh được vì đây là giới hạn của Android khi đổi
+# signing key).
 #
 # Dùng: ./install_headunit.sh [device-serial]
 #   Không truyền serial nếu chỉ có 1 thiết bị/head unit đang kết nối qua adb.
@@ -26,7 +33,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VIETMAP_APK="$SCRIPT_DIR/analysis/vietmap-live-3.3.4-bubble2-signed.apk"
 VIETMAP_PKG="vn.vietmap.live"
 
-CARNAV_APK="$SCRIPT_DIR/esp32/android_car_nav/app/build/outputs/apk/debug/app-debug.apk"
+CARNAV_APK="$SCRIPT_DIR/esp32/android_car_nav/app/build/outputs/apk/release/app-release.apk"
 CARNAV_PKG="com.esp32nav"
 
 # Quyền "dangerous" (runtime) — lấy từ `aapt dump badging` của từng APK. Quyền
