@@ -179,7 +179,13 @@ class VietmapAccessibilityService : AccessibilityService() {
             var bestArea = Long.MAX_VALUE
 
             for (window in allWindows) {
-                val root = window.root
+                // Xem giải thích trong scanAllWindows(): 1 window hỏng (app
+                // widget lạ trên head unit) không được làm hỏng cả vòng lặp.
+                val root = try {
+                    window.root
+                } catch (e: Exception) {
+                    null
+                }
                 val pkg = root?.packageName?.toString()
                 root?.recycle()
                 if (pkg != BUBBLE_PACKAGE) continue
@@ -211,6 +217,7 @@ class VietmapAccessibilityService : AccessibilityService() {
      * getWindows() trả về tất cả windows bao gồm cả embedded activities.
      */
     private var lastScanAllTime = 0L
+    private var lastWindowListLog = 0L
 
     private fun scanAllWindows() {
         // Throttle: trước là 2000ms — quá chậm cho bong bóng đang lái, hay bị
@@ -222,8 +229,37 @@ class VietmapAccessibilityService : AccessibilityService() {
 
         try {
             val allWindows = windows ?: return
+
+            // Chẩn đoán: getWindows() (API cấp cho AccessibilityService) trên
+            // Android <30 (thiết bị này API 28) CHỈ thấy window trên DISPLAY
+            // MẶC ĐỊNH - app embed qua ActivityView/TaskView trên 1 virtual
+            // display khác (kiểu OEM automotive launcher hay dùng) sẽ hoàn
+            // toàn KHÔNG xuất hiện trong danh sách này, không có cách nào
+            // đọc được bằng AccessibilityService trên API level này.
+            if (System.currentTimeMillis() - lastWindowListLog > 5000) {
+                lastWindowListLog = System.currentTimeMillis()
+                Log.i(TAG, "🪟 [scan] ${allWindows.size} windows:")
+                for (w in allWindows) {
+                    val r = try { w.root } catch (e: Exception) { null }
+                    val pkg = try { r?.packageName } catch (e: Exception) { "<err>" }
+                    r?.recycle()
+                    Log.i(TAG, "   layer=${w.layer} type=${w.type} title='${w.title}' pkg=$pkg")
+                }
+            }
+
             for (window in allWindows) {
-                val root = window.root ?: continue
+                // MỖI window xử lý độc lập: 1 window lỗi (ví dụ head unit host
+                // YouTube Music dạng app widget, getWindows()/window.root ném
+                // "AppWidgetServiceImpl$Provider.id null" - lỗi framework OS,
+                // không phải bug ở đây) KHÔNG được làm hỏng cả lượt scan - nếu
+                // không, mọi window liệt kê SAU window lỗi đó (có thể là chính
+                // Google Maps) sẽ bị bỏ qua hoàn toàn mỗi lần quét.
+                val root = try {
+                    window.root
+                } catch (e: Exception) {
+                    Log.w(TAG, "window.root lỗi (window hỏng/widget lạ, bỏ qua window này): ${e.message}")
+                    null
+                } ?: continue
                 try {
                     // Bong bóng nổi VietMap Live: đọc trực tiếp theo view ID
                     // cố định (xác nhận qua dump thật) thay vì đoán theo
@@ -253,7 +289,24 @@ class VietmapAccessibilityService : AccessibilityService() {
                     if (hasGoogleMapsContent) {
                         isNavigating = true
                         parseGoogleMapsData(allTexts)
+
+                        // Dump node thô định kỳ - chẩn đoán trường hợp Maps embed
+                        // trong launcher (ActivityView/TaskView, vd cùng màn hình
+                        // với YouTube Music trên head unit) mà processWindowContent()
+                        // không thấy được (rootInActiveWindow là launcher, không
+                        // phải Maps) nên không có debug dump như đường full-screen.
+                        if (System.currentTimeMillis() - lastDebugLog > 5000) {
+                            lastDebugLog = System.currentTimeMillis()
+                            Log.d(TAG, "=== [google_maps embedded] ${allTexts.size} nodes ===")
+                            allTexts.forEach { info ->
+                                if (info.text.isNotBlank() || info.contentDescription.isNotBlank()) {
+                                    Log.d(TAG, "  d=${info.depth} [${info.viewId}] cls=${info.className} text='${info.text}' desc='${info.contentDescription}'")
+                                }
+                            }
+                        }
                     }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Lỗi xử lý 1 window (bỏ qua, tiếp tục window khác): ${e.message}")
                 } finally {
                     root.recycle()
                 }
