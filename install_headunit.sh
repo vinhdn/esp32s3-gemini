@@ -128,6 +128,28 @@ if install_or_replace "$CARNAV_APK" "$CARNAV_PKG"; then
     log "  bật Notification Listener (đọc cảnh báo camera)"
     "${ADB[@]}" shell cmd notification allow_listener \
         "$CARNAV_PKG/com.esp32nav.service.NavigationListenerService"
+
+    # Mở app 1 lần: quan trọng trên app MỚI CÀI (hoặc vừa force-stop) vì
+    # Android giữ app ở trạng thái "stopped" cho tới khi có 1 lần mở tay/qua
+    # am start — trong lúc "stopped" thì broadcast BOOT_COMPLETED (BootReceiver)
+    # KHÔNG được gửi tới app, nên lần reboot đầu tiên sau khi cài sẽ không tự
+    # khởi động được app. Mở 1 lần ở đây để lần reboot sau đó luôn tự chạy.
+    log "  mở app CarNav (MainActivity)"
+    "${ADB[@]}" shell am start -n "$CARNAV_PKG/.MainActivity"
+
+    # BleForegroundService là exported="false" nên KHÔNG gọi được trực tiếp
+    # qua `am start-foreground-service` từ adb shell (lỗi "not exported").
+    # Không cần thiết: MainActivity.onCreate() -> checkAndRequestPermissions()
+    # đã tự gọi startForegroundService() ngay khi đủ quyền (đã grant ở trên),
+    # và CarNavApplication.onCreate() cũng tự gọi lại sau 2s dù app được mở
+    # theo cách nào — xác nhận qua dumpsys activity services (isForeground=true)
+    # ngay sau khi lệnh am start ở trên chạy xong.
+    sleep 2
+    log "  kiểm tra BleForegroundService đã chạy foreground chưa"
+    "${ADB[@]}" shell dumpsys activity services "$CARNAV_PKG" \
+        | grep -q "BleForegroundService" \
+        && log "  OK - service đang chạy" \
+        || log "  !! service CHƯA thấy chạy, kiểm tra lại thủ công"
 fi
 
 log "=== Xong ==="
