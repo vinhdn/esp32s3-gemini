@@ -73,6 +73,11 @@ static ui_widgets_t s_ui;
 static uint16_t s_last_limit_kmh;
 static int16_t s_last_next_limit_kmh;
 
+// true khi dang co du lieu dan duong Google Maps (xem ui_nav_update()) -
+// dieu khien layout "uu tien dan duong": thu nho bien bao gioi han, chuyen
+// time_remaining_label xuong canh khoi thong tin dan duong.
+static bool s_nav_active;
+
 static lv_timer_t *s_bg_flash_timer = NULL;
 static lv_timer_t *s_limit_blink_timer = NULL;
 
@@ -475,9 +480,44 @@ static const lv_image_dsc_t *direction_to_icon(const char *dir)
     return &nav_icon_straight;
 }
 
+// Thu nho bien bao gioi han (limit_sign) khi dang dan duong Google Maps -
+// nhuong uu tien thi giac cho thong tin dan duong. Icon/khoang cach/ten
+// duong (nav_direction_img/nav_distance_label/nav_road_label) da nam san
+// "phia duoi" limit_sign/speed_circle (xem ui_init(), y=156-192) nen khong
+// can doi vi tri; chi chuyen them time_remaining_label (binh thuong o
+// status bar tren cung) xuong cung khu vuc do, thay cho location_label
+// (khong can khi dang dung Google Maps dan duong thay Vietmap).
+#define NAV_ACTIVE_LIMIT_SCALE 179 // ~70% (LV_SCALE_NONE = 256 = 100%)
+
+static void apply_nav_layout(bool active)
+{
+    lv_obj_set_style_transform_pivot_x(s_ui.limit_sign, lv_pct(50), 0);
+    lv_obj_set_style_transform_pivot_y(s_ui.limit_sign, lv_pct(50), 0);
+    int scale = active ? NAV_ACTIVE_LIMIT_SCALE : LV_SCALE_NONE;
+    lv_obj_set_style_transform_scale_x(s_ui.limit_sign, scale, 0);
+    lv_obj_set_style_transform_scale_y(s_ui.limit_sign, scale, 0);
+
+    if (active) {
+        lv_label_set_text(s_ui.location_label, "");
+        lv_obj_align(s_ui.time_remaining_label, LV_ALIGN_TOP_LEFT, 4, 190);
+    } else {
+        lv_obj_align(s_ui.time_remaining_label, LV_ALIGN_TOP_MID, -20, 2);
+        lv_label_set_text(s_ui.time_remaining_label, "");
+    }
+}
+
 void ui_nav_update(const char *direction, const char *distance, const char *road, const char *instruction)
 {
+    bool has_content = (direction && direction[0]) || (distance && distance[0]) ||
+                        (road && road[0]) || (instruction && instruction[0]);
+    if (!has_content) return;
+
     lvgl_port_lock(0);
+
+    if (!s_nav_active) {
+        s_nav_active = true;
+        apply_nav_layout(true);
+    }
 
     // Direction icon (32x32 bitmap)
     if (direction && direction[0]) {
@@ -503,6 +543,10 @@ void ui_nav_update(const char *direction, const char *distance, const char *road
 
 void ui_nav_clear(void){
     lvgl_port_lock(0);
+    if (s_nav_active) {
+        s_nav_active = false;
+        apply_nav_layout(false);
+    }
     lv_obj_add_flag(s_ui.nav_direction_img, LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(s_ui.nav_distance_label, "");
     lv_label_set_text(s_ui.nav_road_label, "");

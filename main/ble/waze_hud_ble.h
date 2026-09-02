@@ -75,6 +75,11 @@ typedef void (*waze_hud_vehicle_cb_t)(const vehicle_data_t *data, void *ctx);
 // "VHUD" - xem lenh bat/tat trong app_settings.kt/SettingsScreen.kt.
 typedef void (*waze_hud_flip_cb_t)(bool flipped, void *ctx);
 
+// Callback bao dan duong Google Maps da ket thuc/bi huy (notification "nav"
+// tren dien thoai bi go) - dung de dua UI ve trang thai binh thuong (huy lop
+// bang dan duong da thu nho bien bao gioi han o duoi man hinh).
+typedef void (*waze_hud_nav_clear_cb_t)(void *ctx);
+
 // Khoi tao NimBLE host + GATT server HLP + bat dau advertise.
 esp_err_t waze_hud_ble_start(waze_hud_data_cb_t cb, void *ctx);
 
@@ -86,6 +91,9 @@ void waze_hud_ble_set_vehicle_cb(waze_hud_vehicle_cb_t cb, void *ctx);
 
 // Dat callback nhan lenh bat/tat che do HUD.
 void waze_hud_ble_set_hud_flip_cb(waze_hud_flip_cb_t cb, void *ctx);
+
+// Dat callback bao dan duong Google Maps da ket thuc/bi huy.
+void waze_hud_ble_set_nav_clear_cb(waze_hud_nav_clear_cb_t cb, void *ctx);
 
 // Dung + giai phong toan bo tai nguyen NimBLE.
 void waze_hud_ble_stop(void);

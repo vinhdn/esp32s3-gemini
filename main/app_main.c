@@ -130,6 +130,13 @@ static void on_nav_data(const nav_data_t *nav, void *ctx)
     }
 }
 
+// ---- Callback: Google Maps da dung dan duong (notification bi go tren
+// dien thoai) - dua UI dan duong ve trang thai binh thuong ----
+static void on_nav_clear(void *ctx)
+{
+    ui_nav_clear();
+}
+
 // ---- Callback: nhan thong tin xe (OBD-II: toc do, nhiet do, ap suat lop) ----
 static void on_vehicle_data(const vehicle_data_t *vd, void *ctx)
 {
@@ -220,6 +227,7 @@ void app_main(void)
         waze_hud_ble_set_nav_cb(on_nav_data, NULL);
         waze_hud_ble_set_vehicle_cb(on_vehicle_data, NULL);
         waze_hud_ble_set_hud_flip_cb(on_hud_flip, NULL);
+        waze_hud_ble_set_nav_clear_cb(on_nav_clear, NULL);
     }
     log_heap_checkpoint("ble_start");
 

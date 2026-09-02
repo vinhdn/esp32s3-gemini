@@ -196,6 +196,9 @@ class CarNavApplication : Application() {
 
     fun onNavigationCleared() {
         _currentNavData.value = null
+        // Báo board dừng dẫn đường (Google Maps notification bị gỡ) - board tự
+        // khôi phục layout bình thường (bỏ thu nhỏ biển báo giới hạn).
+        imageRelay.sendRawFrame("{\"v\":1,\"t\":\"nav_clear\"}\n".toByteArray())
     }
 
     /**
@@ -271,7 +274,11 @@ class CarNavApplication : Application() {
             if (eta.isNotBlank()) append(",\"eta\":\"${nfc(eta).replace("\"", "")}\"")
             append("}\n")
         }
-        bleManager.writeData(json)
+        // imageRelay (không phải bleManager - manager cũ target sai tên thiết bị
+        // "VIETMAP_HUD_H1X", không bao giờ connect được, xem MainScreen/
+        // BleForegroundService/VietmapAccessibilityService cho các fix tương tự
+        // trong session này) là kênh THẬT đang connected tới board.
+        imageRelay.sendRawFrame(json.toByteArray())
         addLogEntry("TX", json.trim())
     }
 

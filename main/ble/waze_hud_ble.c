@@ -54,6 +54,9 @@ static void *s_vehicle_cb_ctx;
 static waze_hud_flip_cb_t s_hud_flip_cb;
 static void *s_hud_flip_cb_ctx;
 
+static waze_hud_nav_clear_cb_t s_nav_clear_cb;
+static void *s_nav_clear_cb_ctx;
+
 static uint16_t s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static uint16_t s_tx_handle;
 static uint16_t s_rx_handle;
@@ -208,6 +211,11 @@ static void handle_line(const char *line, size_t length)
         s_send_dev_pending = true;
     } else if (strcmp(type->valuestring, "bye") == 0) {
         ESP_LOGI(TAG, "  -> bye (dien thoai chuan bi ngat/dung dan duong)");
+    } else if (strcmp(type->valuestring, "nav_clear") == 0) {
+        ESP_LOGI(TAG, "  -> nav_clear (Google Maps da dung dan duong)");
+        if (s_nav_clear_cb) {
+            s_nav_clear_cb(s_nav_clear_cb_ctx);
+        }
     } else if (strcmp(type->valuestring, "nav") == 0) {
         // Thong tin dan duong tu app Android (Google Maps navigation).
         nav_data_t nav = {0};
@@ -908,4 +916,10 @@ void waze_hud_ble_set_hud_flip_cb(waze_hud_flip_cb_t cb, void *ctx)
 {
     s_hud_flip_cb = cb;
     s_hud_flip_cb_ctx = ctx;
+}
+
+void waze_hud_ble_set_nav_clear_cb(waze_hud_nav_clear_cb_t cb, void *ctx)
+{
+    s_nav_clear_cb = cb;
+    s_nav_clear_cb_ctx = ctx;
 }
