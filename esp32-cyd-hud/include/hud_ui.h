@@ -55,14 +55,45 @@ void hud_set_speed_limit(uint16_t kmh);           /* 0 = unknown -> sign hidden 
 void hud_set_warning(uint8_t slot, hud_warn_t w, uint16_t dist_m); /* slot 0..1 */
 void hud_clear_warnings(void);
 
+/* Kich thuoc canvas anh icon canh bao THAT (giai ma tu JPEG board S3 gui -
+ * xem icon_stream.cpp) - vuong, RGB565, dung dung kich thuoc nay. */
+#define HUD_WARNING_ICON_SIZE 32
+
+/* Thay icon tinh (hud_warn_t) bang anh THAT giai ma duoc (RGB565,
+ * HUD_WARNING_ICON_SIZE x HUD_WARNING_ICON_SIZE) - COPY vao buffer rieng cua
+ * hud_ui, con tro truyen vao chi can hop le trong luc goi ham nay. NULL ->
+ * quay lai icon tinh cua hud_set_warning gan nhat. Doc lap voi
+ * hud_set_warning() (co the goi bat cu thu tu nao). */
+void hud_set_warning_icon_image(uint8_t slot, const uint16_t *rgb565);
+
 void hud_set_nav(const hud_nav_t *nav);           /* enters navigation mode */
 void hud_nav_stop(void);                          /* back to lane-keeping animation */
 
+typedef enum {
+    HUD_WEATHER_NONE,   /* khong co du lieu - hien "--", an icon */
+    HUD_WEATHER_SUNNY,
+    HUD_WEATHER_CLOUDY,
+    HUD_WEATHER_RAIN,
+    HUD_WEATHER_STORM,
+    HUD_WEATHER_SNOW,
+} hud_weather_t;
+
+/* Du bao thoi tiet hom nay/ngay mai (frame VMSX, gan voi VietMap - xem
+ * ble_server.cpp), hien duoi cum "CANH BAO TIEP" (nua trai): nhiet do (so)
+ * phia tren, icon dieu kien phia duoi - khong hien chu "Hom nay/Ngay mai".
+ * today_cond/tomorrow_cond = HUD_WEATHER_NONE -> hien "--" khong icon (giu
+ * bo cuc on dinh, giong sign_limit). */
+void hud_set_weather(int8_t today_temp_c, hud_weather_t today_cond,
+                      int8_t tomorrow_temp_c, hud_weather_t tomorrow_cond);
+
 /* 5-day forecast strip, bottom of the left column. slot 0..4 (0 = today).
- * condition: 0=nang,1=may,2=mua,3=giong,4=tuyet/suong (cung thang voi
- * hud_state_t.forecast_condition[] / WeatherManager.kt CONDITION_*). Khong
- * co icon rieng (chua co asset trong build nay) - mau chu tinh theo condition
- * thay cho glyph. label toi da 3 ky tu ("NAY", "MAI", "+2"...). */
+ * Frame RIENG "VWXF", doc lap voi VietMap (xem ble_server.cpp) - khac voi
+ * hud_set_weather() o tren (van gan voi VMSX/VietMap), 2 duong du lieu nay
+ * doc lap, khong ghi de len nhau. condition: 0=nang,1=may,2=mua,3=giong,
+ * 4=tuyet/suong (cung thang voi hud_state_t.forecast_condition[] /
+ * WeatherManager.kt CONDITION_*). Khong co icon rieng (chua co asset trong
+ * build nay) - mau chu tinh theo condition thay cho glyph. label toi da 3
+ * ky tu ("NAY", "MAI", "+2"...). */
 void hud_set_forecast(uint8_t slot, const char *label, uint8_t condition, int8_t temp_c);
 void hud_clear_forecast(void);
 

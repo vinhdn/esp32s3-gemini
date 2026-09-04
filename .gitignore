@@ -26,3 +26,4 @@ analysis/__pycache__/
 **/.cache/
 .DS_Store
 **/.DS_Store
+managed_components/

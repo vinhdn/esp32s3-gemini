@@ -25,6 +25,14 @@ extern const lv_image_dsc_t icon_exit_right; /* 52x52 A8 */
 extern const lv_image_dsc_t icon_roundabout; /* 52x52 A8 */
 extern const lv_image_dsc_t icon_arrive; /* 52x52 A8 */
 
+/* weather (24x24) - tu ve rieng (src/hud_icons_weather.c), khong thuoc bo
+ * icon goc cua lvgl_hud/, ung voi 5 dieu kien VMSX (0..4). */
+extern const lv_image_dsc_t icon_weather_sunny;
+extern const lv_image_dsc_t icon_weather_cloudy;
+extern const lv_image_dsc_t icon_weather_rain;
+extern const lv_image_dsc_t icon_weather_storm;
+extern const lv_image_dsc_t icon_weather_snow;
+
 #ifdef __cplusplus
 }
 #endif
