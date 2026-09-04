@@ -118,7 +118,12 @@ class ImageRelayBle(private val context: Context) {
     }
 
     private fun startScan() {
-        if (!wanted) return
+        // QUAN TRONG: khong quet lai neu da/dang ket noi - thieu check nay la
+        // nguyen nhan thay "startScan..." roi "onScanFailed: 1" (=
+        // SCAN_FAILED_ALREADY_STARTED) lien tuc du dang co ket noi that su
+        // hoat dong (xac nhan thuc te qua log) - vua thua tai nguyen BLE vua
+        // spam log, khong lam mat ket noi hien co nhung khong nen xay ra.
+        if (!wanted || isConnecting || isConnected) return
         val s = scanner ?: run {
             Log.w(TAG, "Không có BluetoothLeScanner, thử lại sau 3s")
             mainHandler.postDelayed({ startScan() }, 3000)
@@ -157,7 +162,7 @@ class ImageRelayBle(private val context: Context) {
 
         override fun onScanFailed(errorCode: Int) {
             Log.e(TAG, "onScanFailed: $errorCode")
-            if (wanted) mainHandler.postDelayed({ startScan() }, 3000)
+            if (wanted && !isConnecting && !isConnected) mainHandler.postDelayed({ startScan() }, 3000)
         }
     }
 
