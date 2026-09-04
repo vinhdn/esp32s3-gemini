@@ -141,6 +141,17 @@ class NavigationListenerService : NotificationListenerService() {
         val distanceStartMatch = distanceStartRegex.find(titleTrimmed)
 
         when {
+            // Title rong nhung text co noi dung - vd trang thai tam thoi khong
+            // gan voi 1 buoc dan duong cu the ("Đang định tuyến lại...", mat
+            // GPS...). Khong co dinh dang nao trong 3 dinh dang duoi day khop
+            // (title rong -> distanceStartMatch luon null) nen truoc day roi
+            // vao "else" (Format B) voi title rong -> khong gui duoc gi ca.
+            // Dung tam text nay lam roadName de board van hien duoc gi do
+            // thay vi trong trang.
+            titleTrimmed.isBlank() && text.isNotBlank() -> {
+                roadName = text.trim()
+            }
+
             // Format C: title starts with distance + " - " + instruction
             // e.g. "270 m - về hướng Mỹ Đình"
             distanceStartMatch != null && titleTrimmed.contains(" - ") -> {
