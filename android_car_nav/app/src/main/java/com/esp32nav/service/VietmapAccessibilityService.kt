@@ -288,7 +288,13 @@ class VietmapAccessibilityService : AccessibilityService() {
 
                     if (hasGoogleMapsContent) {
                         isNavigating = true
-                        parseGoogleMapsData(allTexts)
+                        // TAM TAT: chi dung NavigationListenerService (doc qua
+                        // notification) lam nguon dan duong Google Maps duy
+                        // nhat - tranh 2 nguon (accessibility + notification)
+                        // cung goi onGoogleMapsNavUpdate() gay xung dot/nhieu
+                        // du lieu (icon huong re sai do du lieu tu 2 nguon
+                        // ghi de nhau khong theo thu tu).
+                        // parseGoogleMapsData(allTexts)
 
                         // Dump node thô định kỳ - chẩn đoán trường hợp Maps embed
                         // trong launcher (ActivityView/TaskView, vd cùng màn hình
@@ -339,7 +345,8 @@ class VietmapAccessibilityService : AccessibilityService() {
             when {
                 packageName.contains("vietmap") -> parseVietmapData(allTexts)
                 packageName == "com.datmap.app" -> parseDatMapData(allTexts)
-                packageName == "com.google.android.apps.maps" -> parseGoogleMapsData(allTexts)
+                // TAM TAT: xem giai thich trong scanAllWindows().
+                // packageName == "com.google.android.apps.maps" -> parseGoogleMapsData(allTexts)
             }
 
             // Debug log every 10 seconds

@@ -50,8 +50,15 @@ class BleForegroundService : Service() {
         // bắt đầu ở đây, dừng ở onDestroy. Activity/Application không được
         // tự gọi startScan()/connect() nữa — chỉ start/stop service này.
         val app = application as? CarNavApplication
-        app?.bleManager?.setAutoReconnect(true)
-        app?.bleManager?.startScan()
+        // TAM COMMENT: BleManager la giao thuc HLP cu, quet ten "VIETMAP_HUD_H1X"
+        // khong bao gio khop firmware hien tai (advertise "VIETMAP_HUD_H50") -
+        // khong bao gio connect duoc nhung van lap lai startScan() lien tuc,
+        // gay nghen stack Bluetooth cua may (Android throttle "scanning too
+        // frequently") va lam rot ca ket noi that cua imageRelay (GATT status
+        // 133) dang co gang thiet lap cung luc. Bat lai neu can dung lai giao
+        // thuc HLP voi 1 board khac dung dung ten H1X.
+        // app?.bleManager?.setAutoReconnect(true)
+        // app?.bleManager?.startScan()
         app?.imageRelay?.start()
     }
 
@@ -106,8 +113,9 @@ class BleForegroundService : Service() {
             if (app != null) {
                 val state = app.imageRelay.bleState.value.connectionState
                 if (state == BleConnectionState.DISCONNECTED) {
-                    app.bleManager.setAutoReconnect(true)
-                    app.bleManager.startScan()
+                    // TAM COMMENT: xem giai thich trong onCreate() o tren.
+                    // app.bleManager.setAutoReconnect(true)
+                    // app.bleManager.startScan()
                     app.imageRelay.start()
                 }
             }

@@ -1,12 +1,17 @@
 package com.esp32nav.service
 
 import android.app.Notification
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.drawable.BitmapDrawable
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
 import com.esp32nav.CarNavApplication
 import com.esp32nav.parser.DatMapParser
 import com.esp32nav.parser.GoogleMapsParser
+import java.io.File
+import java.io.FileOutputStream
 
 class NavigationListenerService : NotificationListenerService() {
 
@@ -205,6 +210,29 @@ class NavigationListenerService : NotificationListenerService() {
             direction = "straight" // Đang trên đường thẳng, chưa có lượt rẽ
         }
 
+        // Google Maps hien huong re THAT qua android.largeIcon (bitmap ve san),
+        // KHONG PHAI qua text - doan qua text (parseDirectionFromInstruction)
+        // co the sai (da xac nhan thuc te: dang "Make a U-turn" bi doan thanh
+        // "straight"). Uu tien ket qua tra bang hash bitmap (chinh xac hon,
+        // xay tu mau anh that thu thap luc lai xe that - xem
+        // ICON_HASH_TO_DIRECTION), text-parsing chi con la fallback cho
+        // huong con thieu mau (chech trai/phai, vong xuyen, nhap lan...).
+        try {
+            val largeIcon = notification.getLargeIcon()
+            val drawable = largeIcon?.loadDrawable(this)
+            val bmp = (drawable as? BitmapDrawable)?.bitmap
+            if (bmp != null) {
+                val hash = iconDHash(bmp)
+                val matched = matchIconDirection(hash)
+                Log.i(TAG, "🖼️ largeIcon dHash=0x%016X size=%dx%d doan-text=%s tra-bang=%s".format(
+                    hash, bmp.width, bmp.height, direction, matched ?: "(khong khop)"))
+                if (matched != null) direction = matched
+                saveIconSample(bmp, hash) // van luu mau moi/chua biet de bo sung bang sau
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Khong doc duoc largeIcon: ${e.message}")
+        }
+
         Log.i(TAG, "Parsed: dir=$direction dist=$distance road=$roadName inst=$instruction time=$timeRemaining total=$totalDistance eta=$eta")
 
         val app = application as? CarNavApplication ?: return
@@ -268,6 +296,81 @@ class NavigationListenerService : NotificationListenerService() {
             lower.contains("arrive") || lower.contains("destination") -> "arrive"
             lower.contains("merge") -> "merge"
             else -> "straight"
+        }
+    }
+
+    /**
+     * Bang tra "dHash bitmap icon That -> huong re" - xay tu mau anh THAT thu
+     * thap luc lai xe that (icon Google Maps ve, khong phai doan qua text).
+     * Moi lan them huong moi: xem file PNG luu trong
+     * getExternalFilesDir(null)/nav_icons/ (pull qua `adb pull`, khong can
+     * root) de xac nhan hinh dang bang mat roi them dong moi vao day.
+     */
+    private val ICON_HASH_TO_DIRECTION = mapOf(
+        0x0010101054201000UL to "straight",   // mui ten thang + gach dut
+        0x0080808880040800UL to "turn_left",  // mui ten cong trai
+        0x0002024280c02000UL to "turn_right", // mui ten cong phai
+        0x0080889288884000UL to "u_turn",     // mui ten quay dau
+    )
+
+    /** So bit khac nhau toi da van coi la "khop" - chong lech nhe do resize/nen. */
+    private val ICON_HASH_MAX_DISTANCE = 6
+
+    private fun matchIconDirection(hash: Long): String? {
+        val h = hash.toULong()
+        var best: String? = null
+        var bestDist = Int.MAX_VALUE
+        for ((refHash, dir) in ICON_HASH_TO_DIRECTION) {
+            val dist = java.lang.Long.bitCount((h xor refHash).toLong())
+            if (dist < bestDist) {
+                bestDist = dist
+                best = dir
+            }
+        }
+        return if (bestDist <= ICON_HASH_MAX_DISTANCE) best else null
+    }
+
+    /**
+     * "Dau van tay" 8x8 cua bitmap icon dan duong, dua tren kenh ALPHA (icon
+     * la hinh mui ten trang tren nen trong suot, khong phai mau sac - dung
+     * alpha thay vi luminance de khong bi anh huong boi mau tint cua app/theme).
+     * Thuat toan dHash chuan: so sanh do sang 2 pixel ke nhau theo hang ngang,
+     * ben trai sang hon -> bit 1. On dinh voi anh cung noi dung du bi resize/
+     * nen nhe (khac vai bit thi van coi la giong qua Hamming distance).
+     */
+    private fun iconDHash(bmp: Bitmap): Long {
+        val resized = Bitmap.createScaledBitmap(bmp, 9, 8, true)
+        var hash = 0L
+        var bit = 0
+        for (y in 0 until 8) {
+            for (x in 0 until 8) {
+                val left = Color.alpha(resized.getPixel(x, y))
+                val right = Color.alpha(resized.getPixel(x + 1, y))
+                if (left > right) hash = hash or (1L shl bit)
+                bit++
+            }
+        }
+        return hash
+    }
+
+    /**
+     * Luu anh PNG that vao bo nho ngoai rieng cua app (khong can quyen dac
+     * biet, doc duoc qua `adb pull` khong can root) de doi chieu bang mat voi
+     * huong re THAT quan sat duoc khi lai xe - ten file kem hash de de tra cuu
+     * lai. Chi giu 1 ban/hash (ghi de) de khong day bo nho theo thoi gian.
+     */
+    private fun saveIconSample(bmp: Bitmap, hash: Long) {
+        try {
+            val dir = File(getExternalFilesDir(null), "nav_icons")
+            if (!dir.exists()) dir.mkdirs()
+            val file = File(dir, "icon_%016x.png".format(hash))
+            if (file.exists()) return // da co mau nay roi
+            FileOutputStream(file).use { out ->
+                bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+            Log.i(TAG, "  -> da luu mau icon: ${file.absolutePath}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Khong luu duoc mau icon: ${e.message}")
         }
     }
 
