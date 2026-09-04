@@ -9,6 +9,7 @@ Code port of `HUD 320x240.dc.html`. Same geometry: left column 150 px
 |---|---|
 | `hud_theme.h` | colours, geometry, font macros |
 | `hud_ui.h/.c` | screen build + runtime API |
+| `hud_lane_assets.h/.c` | car sprite + lane dash sprites for the lane-keeping animation |
 | `hud_icons.h/.c` | 16 icons as `lv_image_dsc_t`, `LV_COLOR_FORMAT_A8` (recolourable) |
 | `hud_320x240.ino` | Arduino sketch: TFT_eSPI display driver + demo state |
 | `assets/png/*.png` | same icons as PNG, if you prefer to re-convert yourself |
@@ -99,6 +100,27 @@ Direction set, one per `hud_turn_t` value: `straight`, `turn_left`,
 `turn_right`, `slight_left`, `slight_right`, `sharp_left`, `sharp_right`,
 `u_turn`, `merge`, `exit_right`, `roundabout`, `arrive`. To use RGB565A8 or a different format instead, re-convert
 `assets/png/*.png` with the LVGL online image converter.
+
+## Lane-keeping animation resources
+`hud_lane_assets.c` holds three sprites and the geometry defines used by
+`build_lane()`:
+
+| Symbol | Size | Format | Flash | Note |
+|---|---|---|---|---|
+| `car_top` | 40 x 64 | RGB565A8 | 7.7 kB | cyan gradient body, dark glass, mirrors — colour baked in |
+| `lane_dash` | 2 x 14 | A8 | 28 B | side markings, soft ends; recoloured to `HUD_C_LANE` |
+| `lane_dash_center` | 1 x 8 | A8 | 8 B | faint centre line; recoloured to `HUD_C_LINE` |
+
+Two `lv_anim`s drive it, no frame sequence: the three dash tracks are 2x the
+panel height and translate up by one `HUD_LANE_PERIOD` (30 px) in 1100 ms on
+infinite repeat, so the loop is seamless; the car sways +/- `HUD_CAR_SWAY`
+(3 px) over 3400 ms with `lv_anim_path_ease_in_out`. Speed of the road reads
+as motion, so tie the 1100 ms to real speed if you want:
+`lv_anim_set_duration(&lane_anim, 60000 / kmh)`.
+
+Re-render `car_top` at a different size by editing
+`assets/png/car_top.png` and re-running the converter; keep RGB565A8 if you
+want the gradient, or switch to A8 and recolour if you prefer a flat car.
 
 ## Not included
 - No display-driver tuning for a specific panel (TFT_eSPI `User_Setup.h` is yours).

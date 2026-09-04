@@ -61,7 +61,7 @@ static void build_left(void)
     lv_obj_set_style_pad_all(col, 9, 0);
     lv_obj_set_style_pad_left(col, 10, 0);
 
-    caption(col, "TOC DO");
+    caption(col, "TỐC ĐỘ");
     lv_obj_align(lv_obj_get_child(col, 0), LV_ALIGN_TOP_LEFT, 0, 0);
 
     lbl_speed = label(col, "0", HUD_F_SPEED, HUD_C_WHITE);
@@ -88,7 +88,7 @@ static void build_left(void)
     lv_obj_set_style_bg_color(hr, HUD_C_LINE, 0);
     lv_obj_set_style_bg_opa(hr, LV_OPA_COVER, 0);
 
-    lv_obj_t *cap = caption(col, "CANH BAO TIEP");
+    lv_obj_t *cap = caption(col, "CẢNH BÁO TIẾP");
     lv_obj_align(cap, LV_ALIGN_TOP_LEFT, 0, 100);
 
     for (int i = 0; i < 2; i++) {
@@ -171,9 +171,9 @@ static void build_nav(void)
     lv_obj_set_style_bg_color(hr, HUD_C_LINE, 0);
     lv_obj_set_style_bg_opa(hr, LV_OPA_COVER, 0);
 
-    metric(nav_panel, "CON LAI", 0,  LV_ALIGN_BOTTOM_LEFT,  HUD_C_TEXT, &m_remain);
-    metric(nav_panel, "T.GIAN",  56, LV_ALIGN_BOTTOM_LEFT,  HUD_C_TEXT, &m_eta);
-    metric(nav_panel, "DEN",     0,  LV_ALIGN_BOTTOM_RIGHT, HUD_C_CYAN, &m_arrive);
+    metric(nav_panel, "CÒN LẠI", 0,  LV_ALIGN_BOTTOM_LEFT,  HUD_C_TEXT, &m_remain);
+    metric(nav_panel, "T.GIAN",  56, LV_ALIGN_BOTTOM_LEFT,  HUD_C_TEXT, &m_eta); // giu viet tat - cot rong 56px, README goc cung dung "T.GIAN"
+    metric(nav_panel, "ĐẾN",     0,  LV_ALIGN_BOTTOM_RIGHT, HUD_C_CYAN, &m_arrive);
 
     lv_obj_add_flag(nav_panel, LV_OBJ_FLAG_HIDDEN);
 }
@@ -197,7 +197,8 @@ static void build_lane(void)
     lane_panel = plain(scr);
     lv_obj_set_size(lane_panel, HUD_RIGHT_W, HUD_SCR_H);
     lv_obj_set_pos(lane_panel, HUD_LEFT_W + 1, 0);
-    lv_obj_add_flag(lane_panel, LV_OBJ_FLAG_CLIP_CORNER);
+    // LV_OBJ_FLAG_CLIP_CORNER khong con trong LVGL9 (chi con dang style) -
+    // lv_obj_set_style_clip_corner() ben duoi la du.
     lv_obj_set_style_clip_corner(lane_panel, true, 0);
 
     /* three vertical tracks built from the A8 dash sprites; each track is
@@ -224,9 +225,9 @@ static void build_lane(void)
     lv_image_set_src(car, &car_top);
     lv_obj_align(car, LV_ALIGN_TOP_MID, 0, HUD_CAR_Y);
 
-    lv_obj_t *foot = caption(lane_panel, "GIU LAN");
+    lv_obj_t *foot = caption(lane_panel, "GIỮ LÀN");
     lv_obj_align(foot, LV_ALIGN_BOTTOM_LEFT, 10, -8);
-    lv_obj_t *foot2 = caption(lane_panel, "KHONG DAN DUONG");
+    lv_obj_t *foot2 = caption(lane_panel, "KHÔNG DẪN ĐƯỜNG");
     lv_obj_align(foot2, LV_ALIGN_BOTTOM_RIGHT, -10, -8);
 
     /* dash scroll: one period upward, looped */
@@ -295,10 +296,10 @@ void hud_set_warning(uint8_t slot, hud_warn_t w, uint16_t dist_m)
     const char *name = "";
     bool urgent = false;
     switch (w) {
-        case HUD_WARN_SPEEDCAM:    src = &icon_speedcam;   name = "BAN TOC DO";  urgent = true; break;
-        case HUD_WARN_PEDESTRIAN:  src = &icon_pedestrian; name = "NGUOI DI BO"; break;
-        case HUD_WARN_ROUGH_ROAD:  src = &icon_roughroad;  name = "DUONG XAU";   break;
-        case HUD_WARN_SHARP_CURVE: src = &icon_sharpcurve; name = "CUA GAP";     break;
+        case HUD_WARN_SPEEDCAM:    src = &icon_speedcam;   name = "BẮN TỐC ĐỘ";  urgent = true; break;
+        case HUD_WARN_PEDESTRIAN:  src = &icon_pedestrian; name = "NGƯỜI ĐI BỘ"; break;
+        case HUD_WARN_ROUGH_ROAD:  src = &icon_roughroad;  name = "ĐƯỜNG XẤU";   break;
+        case HUD_WARN_SHARP_CURVE: src = &icon_sharpcurve; name = "CUA GẤP";     break;
         default: break;
     }
 
@@ -329,19 +330,19 @@ void hud_set_nav(const hud_nav_t *nav)
     lv_obj_clear_flag(nav_panel, LV_OBJ_FLAG_HIDDEN);
 
     const lv_image_dsc_t *src = &icon_straight;
-    const char *turn = "DI THANG";
+    const char *turn = "ĐI THẲNG";
     switch (nav->turn) {
-        case HUD_TURN_LEFT:         src = &icon_turn_left;    turn = "RE TRAI";     break;
-        case HUD_TURN_RIGHT:        src = &icon_turn_right;   turn = "RE PHAI";     break;
-        case HUD_TURN_SLIGHT_LEFT:  src = &icon_slight_left;  turn = "CHECH TRAI";  break;
-        case HUD_TURN_SLIGHT_RIGHT: src = &icon_slight_right; turn = "CHECH PHAI";  break;
-        case HUD_TURN_SHARP_LEFT:   src = &icon_sharp_left;   turn = "RE GAP TRAI"; break;
-        case HUD_TURN_SHARP_RIGHT:  src = &icon_sharp_right;  turn = "RE GAP PHAI"; break;
-        case HUD_TURN_U_TURN:       src = &icon_u_turn;       turn = "QUAY DAU";    break;
-        case HUD_TURN_MERGE:        src = &icon_merge;        turn = "NHAP LAN";    break;
-        case HUD_TURN_EXIT_RIGHT:   src = &icon_exit_right;   turn = "RA LOI RE";   break;
-        case HUD_TURN_ROUNDABOUT:   src = &icon_roundabout;   turn = "VONG XUYEN";  break;
-        case HUD_TURN_ARRIVE:       src = &icon_arrive;       turn = "DEN DICH";    break;
+        case HUD_TURN_LEFT:         src = &icon_turn_left;    turn = "RẼ TRÁI";     break;
+        case HUD_TURN_RIGHT:        src = &icon_turn_right;   turn = "RẼ PHẢI";     break;
+        case HUD_TURN_SLIGHT_LEFT:  src = &icon_slight_left;  turn = "CHẾCH TRÁI";  break;
+        case HUD_TURN_SLIGHT_RIGHT: src = &icon_slight_right; turn = "CHẾCH PHẢI";  break;
+        case HUD_TURN_SHARP_LEFT:   src = &icon_sharp_left;   turn = "RẼ GẮT TRÁI"; break;
+        case HUD_TURN_SHARP_RIGHT:  src = &icon_sharp_right;  turn = "RẼ GẮT PHẢI"; break;
+        case HUD_TURN_U_TURN:       src = &icon_u_turn;       turn = "QUAY ĐẦU";    break;
+        case HUD_TURN_MERGE:        src = &icon_merge;        turn = "NHẬP LÀN";    break;
+        case HUD_TURN_EXIT_RIGHT:   src = &icon_exit_right;   turn = "RA LỐI RẼ";   break;
+        case HUD_TURN_ROUNDABOUT:   src = &icon_roundabout;   turn = "VÒNG XUYẾN";  break;
+        case HUD_TURN_ARRIVE:       src = &icon_arrive;       turn = "ĐẾN ĐÍCH";    break;
         case HUD_TURN_STRAIGHT:
         default: break;
     }
@@ -349,18 +350,13 @@ void hud_set_nav(const hud_nav_t *nav)
     icon_tint(nav_icon, HUD_C_CYAN);
     lv_label_set_text(nav_turn, turn);
 
-    char buf[16];
-    if (nav->dist_m >= 1000) snprintf(buf, sizeof(buf), "%u,%u km", nav->dist_m / 1000, (nav->dist_m % 1000) / 100);
-    else                     snprintf(buf, sizeof(buf), "%u m", (unsigned)nav->dist_m);
-    lv_label_set_text(nav_dist, buf);
-
+    /* Cac truong da la chuoi hoan chinh (don vi/dinh dang tu Google Maps
+     * qua dien thoai) - hien thi truc tiep, khong tu ghep don vi nua. */
+    lv_label_set_text(nav_dist, nav->dist ? nav->dist : "--");
     lv_label_set_text(nav_street, nav->street ? nav->street : "");
     lv_label_set_text(nav_hint,   nav->hint   ? nav->hint   : "");
-
-    snprintf(buf, sizeof(buf), "%u,%u km", nav->remain_100m / 10, nav->remain_100m % 10);
-    lv_label_set_text(m_remain, buf);
-    snprintf(buf, sizeof(buf), "%u ph", (unsigned)nav->eta_min);
-    lv_label_set_text(m_eta, buf);
+    lv_label_set_text(m_remain, nav->remain ? nav->remain : "--");
+    lv_label_set_text(m_eta, nav->time_remaining ? nav->time_remaining : "--");
     lv_label_set_text(m_arrive, nav->arrive_hhmm ? nav->arrive_hhmm : "--:--");
 }
 
