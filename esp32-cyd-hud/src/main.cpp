@@ -6,6 +6,7 @@
 
 #include "ble_server.h"
 #include "hud_state.h"
+#include "icon_stream.h"
 #include "ui.h"
 
 // Task rieng cho LVGL (core 1) - tach khoi task loop() mac dinh (core 1 cung,
@@ -17,6 +18,11 @@ static void lvgl_task(void *arg)
     (void)arg;
     ui_init();
     Serial.println("[lvgl_task] UI da khoi tao");
+
+    // Sau ui_init() vi can canvas cua hud_ui da ton tai truoc khi task giai
+    // ma JPEG co the ghi vao (hud_set_warning_icon_image()).
+    icon_stream_init();
+    Serial.println("[lvgl_task] icon_stream da khoi tao");
 
     uint32_t last_refresh = 0;
     for (;;) {

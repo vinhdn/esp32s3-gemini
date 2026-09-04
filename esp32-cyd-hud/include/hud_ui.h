@@ -55,6 +55,17 @@ void hud_set_speed_limit(uint16_t kmh);           /* 0 = unknown -> sign hidden 
 void hud_set_warning(uint8_t slot, hud_warn_t w, uint16_t dist_m); /* slot 0..1 */
 void hud_clear_warnings(void);
 
+/* Kich thuoc canvas anh icon canh bao THAT (giai ma tu JPEG board S3 gui -
+ * xem icon_stream.cpp) - vuong, RGB565, dung dung kich thuoc nay. */
+#define HUD_WARNING_ICON_SIZE 32
+
+/* Thay icon tinh (hud_warn_t) bang anh THAT giai ma duoc (RGB565,
+ * HUD_WARNING_ICON_SIZE x HUD_WARNING_ICON_SIZE) - COPY vao buffer rieng cua
+ * hud_ui, con tro truyen vao chi can hop le trong luc goi ham nay. NULL ->
+ * quay lai icon tinh cua hud_set_warning gan nhat. Doc lap voi
+ * hud_set_warning() (co the goi bat cu thu tu nao). */
+void hud_set_warning_icon_image(uint8_t slot, const uint16_t *rgb565);
+
 void hud_set_nav(const hud_nav_t *nav);           /* enters navigation mode */
 void hud_nav_stop(void);                          /* back to lane-keeping animation */
 

@@ -10,7 +10,12 @@
 /* ---------- widget handles ---------- */
 static lv_obj_t *scr;
 static lv_obj_t *lbl_speed, *sign_limit, *lbl_limit;
-static lv_obj_t *warn_box[2], *warn_icon[2], *warn_dist[2], *warn_name[2];
+static lv_obj_t *warn_box[2], *warn_icon[2], *warn_dist[2];
+static lv_obj_t *warn_icon_canvas[2];
+/* Heap (malloc), khong phai static array - board khong PSRAM, DRAM tinh
+ * (BSS) rat han hep (da xac nhan qua build that: static array o day cong
+ * voi icon_stream.cpp lam DRAM tran ~17.6KB, chuyen sang heap la du). */
+static uint16_t *warn_icon_canvas_buf[2];
 static lv_obj_t *weather_temp[2], *weather_icon[2];
 
 static lv_obj_t *nav_panel, *nav_icon, *nav_dist, *nav_turn, *nav_street, *nav_hint;
@@ -66,10 +71,10 @@ static void build_left(void)
     lv_obj_align(lv_obj_get_child(col, 0), LV_ALIGN_TOP_LEFT, 0, 0);
 
     lbl_speed = label(col, "0", HUD_F_SPEED, HUD_C_WHITE);
-    lv_obj_align(lbl_speed, LV_ALIGN_TOP_LEFT, -2, 12);
+    lv_obj_align(lbl_speed, LV_ALIGN_TOP_LEFT, 2, 12);
 
     lv_obj_t *unit = label(col, "km/h", HUD_F_SMALL, HUD_C_TEXT_DIM);
-    lv_obj_align_to(unit, lbl_speed, LV_ALIGN_OUT_RIGHT_BOTTOM, 3, -6);
+    lv_obj_align_to(unit, lbl_speed, LV_ALIGN_BOTTOM_LEFT, -3, 3);
 
     /* speed-limit sign: white disc, 5 px red ring */
     sign_limit = plain(col);
@@ -107,12 +112,21 @@ static void build_left(void)
         lv_obj_align(warn_icon[i], LV_ALIGN_TOP_MID, 0, 6);
         icon_tint(warn_icon[i], HUD_C_TEXT);
 
-        warn_dist[i] = label(warn_box[i], "--", HUD_F_SMALL, HUD_C_TEXT);
-        lv_obj_align(warn_dist[i], LV_ALIGN_TOP_MID, 0, 34);
+        /* Anh icon canh bao THAT (giai ma JPEG tu VietMap Live that, xem
+         * icon_stream.cpp) - de tren warn_icon (che khi co du lieu that qua
+         * hud_set_warning_icon_image(), khong thi giu icon tinh o duoi). */
+        warn_icon_canvas_buf[i] = (uint16_t *)malloc(
+            (size_t)HUD_WARNING_ICON_SIZE * HUD_WARNING_ICON_SIZE * sizeof(uint16_t));
+        warn_icon_canvas[i] = lv_canvas_create(warn_box[i]);
+        if (warn_icon_canvas_buf[i]) {
+            lv_canvas_set_buffer(warn_icon_canvas[i], warn_icon_canvas_buf[i],
+                                  HUD_WARNING_ICON_SIZE, HUD_WARNING_ICON_SIZE, LV_COLOR_FORMAT_RGB565);
+        }
+        lv_obj_align(warn_icon_canvas[i], LV_ALIGN_TOP_MID, 0, 2);
+        lv_obj_add_flag(warn_icon_canvas[i], LV_OBJ_FLAG_HIDDEN);
 
-        warn_name[i] = label(warn_box[i], "", HUD_F_LABEL, HUD_C_LABEL);
-        lv_obj_set_style_text_letter_space(warn_name[i], 1, 0);
-        lv_obj_align(warn_name[i], LV_ALIGN_BOTTOM_MID, 0, -6);
+        warn_dist[i] = label(warn_box[i], "--", HUD_F_SMALL, HUD_C_TEXT);
+        lv_obj_align(warn_dist[i], LV_ALIGN_BOTTOM_MID, 0, -6);
 
         lv_obj_add_flag(warn_box[i], LV_OBJ_FLAG_HIDDEN);
     }
@@ -314,16 +328,18 @@ void hud_set_speed_limit(uint16_t kmh)
 void hud_set_warning(uint8_t slot, hud_warn_t w, uint16_t dist_m)
 {
     if (slot > 1) return;
-    if (w == HUD_WARN_NONE) { lv_obj_add_flag(warn_box[slot], LV_OBJ_FLAG_HIDDEN); return; }
+    if (w == HUD_WARN_NONE) {
+        lv_obj_add_flag(warn_box[slot], LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
 
     const lv_image_dsc_t *src = &icon_roughroad;
-    const char *name = "";
     bool urgent = false;
     switch (w) {
-        case HUD_WARN_SPEEDCAM:    src = &icon_speedcam;   name = "BẮN TỐC ĐỘ";  urgent = true; break;
-        case HUD_WARN_PEDESTRIAN:  src = &icon_pedestrian; name = "NGƯỜI ĐI BỘ"; break;
-        case HUD_WARN_ROUGH_ROAD:  src = &icon_roughroad;  name = "ĐƯỜNG XẤU";   break;
-        case HUD_WARN_SHARP_CURVE: src = &icon_sharpcurve; name = "CUA GẤP";     break;
+        case HUD_WARN_SPEEDCAM:    src = &icon_speedcam;   urgent = true; break;
+        case HUD_WARN_PEDESTRIAN:  src = &icon_pedestrian; break;
+        case HUD_WARN_ROUGH_ROAD:  src = &icon_roughroad;  break;
+        case HUD_WARN_SHARP_CURVE: src = &icon_sharpcurve; break;
         default: break;
     }
 
@@ -333,7 +349,6 @@ void hud_set_warning(uint8_t slot, hud_warn_t w, uint16_t dist_m)
     lv_obj_set_style_bg_color(warn_box[slot], urgent ? HUD_C_AMBER_BG : HUD_C_PANEL, 0);
     lv_obj_set_style_border_color(warn_box[slot], urgent ? HUD_C_AMBER_LINE : HUD_C_BORDER, 0);
     lv_obj_set_style_text_color(warn_dist[slot], urgent ? HUD_C_AMBER : HUD_C_TEXT, 0);
-    lv_label_set_text(warn_name[slot], name);
 
     char buf[12];
     if (dist_m >= 1000) snprintf(buf, sizeof(buf), "%u.%u km", dist_m / 1000, (dist_m % 1000) / 100);
@@ -415,6 +430,23 @@ static void set_weather_slot(int i, int8_t temp_c, hud_weather_t cond)
     lv_label_set_text(weather_temp[i], buf);
     lv_image_set_src(weather_icon[i], src);
     lv_obj_clear_flag(weather_icon[i], LV_OBJ_FLAG_HIDDEN);
+}
+
+void hud_set_warning_icon_image(uint8_t slot, const uint16_t *rgb565)
+{
+    if (slot > 1 || warn_icon_canvas_buf[slot] == NULL) return;
+    if (rgb565 == NULL) {
+        lv_obj_add_flag(warn_icon_canvas[slot], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(warn_icon[slot], LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    if (rgb565 != warn_icon_canvas_buf[slot]) {
+        memcpy(warn_icon_canvas_buf[slot], rgb565,
+               sizeof(uint16_t) * HUD_WARNING_ICON_SIZE * HUD_WARNING_ICON_SIZE);
+    }
+    lv_obj_invalidate(warn_icon_canvas[slot]);
+    lv_obj_add_flag(warn_icon[slot], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(warn_icon_canvas[slot], LV_OBJ_FLAG_HIDDEN);
 }
 
 void hud_set_weather(int8_t today_temp_c, hud_weather_t today_cond,

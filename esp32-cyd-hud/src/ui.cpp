@@ -17,7 +17,9 @@
 
 static TFT_eSPI s_tft = TFT_eSPI();
 
-#define UI_BUF_LINES 30
+// 30 -> 22: nhuong lai ~2.5KB DRAM tinh cho TJpg_Decoder (icon_stream.cpp) -
+// board khong PSRAM, DRAM tinh rat han hep. Van du muot cho UI tinh.
+#define UI_BUF_LINES 22
 static uint8_t s_buf1[BOARD_LCD_H_RES * UI_BUF_LINES * 2]; // RGB565 = 2 byte/px
 
 static void disp_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px)

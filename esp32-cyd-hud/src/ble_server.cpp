@@ -7,6 +7,7 @@
 
 #include "board_pins.h"
 #include "hud_state.h"
+#include "icon_stream.h"
 
 // Parse 3 dinh dang frame giong het esp32/main/ble/waze_hud_ble.c (server
 // GATT that dang chay tren board ESP32-S3). Ca 3 deu ghi vao CUNG 1
@@ -209,6 +210,14 @@ static void feed_json_bytes(const uint8_t *data, size_t len)
     }
 }
 
+// true = chunk tiep theo van la du lieu JPEG (giua SOI va EOI cua 1 anh icon
+// canh bao) - PHAI la state XUYEN SUOT nhieu lan onWrite() vi 1 anh JPEG bi
+// cat thanh nhieu chunk theo MTU, chi chunk DAU TIEN moi bat dau bang 0xFF
+// that su (SOI); cac chunk tiep theo la du lieu JPEG lien tuc, byte dau co
+// the la bat ky gia tri nao - khong the phan biet duoc per-chunk, phai nho
+// trang thai (giong access_cb trong waze_hud_ble.c ben board S3 cu).
+static bool s_receiving_icon = false;
+
 class HudWriteCallbacks : public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic *pCharacteristic) override
     {
@@ -217,7 +226,16 @@ class HudWriteCallbacks : public NimBLECharacteristicCallbacks {
         size_t len = value.size();
         if (len == 0) return;
 
-        if (data[0] == '{' || data[0] == '[') {
+        uint8_t first_byte = data[0];
+        if (first_byte == '{' || first_byte == '[') {
+            s_receiving_icon = false;
+        } else if (first_byte == 0xFF) {
+            s_receiving_icon = true;
+        }
+
+        if (s_receiving_icon) {
+            s_receiving_icon = icon_stream_feed(data, len);
+        } else if (first_byte == '{' || first_byte == '[') {
             feed_json_bytes(data, len);
         } else {
             handle_frame(data, len);
