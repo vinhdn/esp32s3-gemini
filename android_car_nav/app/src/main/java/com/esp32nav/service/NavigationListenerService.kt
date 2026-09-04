@@ -307,10 +307,21 @@ class NavigationListenerService : NotificationListenerService() {
      * root) de xac nhan hinh dang bang mat roi them dong moi vao day.
      */
     private val ICON_HASH_TO_DIRECTION = mapOf(
-        0x0010101054201000UL to "straight",   // mui ten thang + gach dut
-        0x0080808880040800UL to "turn_left",  // mui ten cong trai
-        0x0002024280c02000UL to "turn_right", // mui ten cong phai
-        0x0080889288884000UL to "u_turn",     // mui ten quay dau
+        0x0010101054201000UL to "straight",     // mui ten thang + gach dut
+        0x0080808880040800UL to "turn_left",    // mui ten cong trai
+        0x0002024280c02000UL to "turn_right",   // mui ten cong phai
+        0x0080889288884000UL to "u_turn",       // mui ten quay dau
+        0x0080988c92a04000UL to "sharp_left",   // mui ten cong gat xuong-trai
+        0x0004040c50404000UL to "slight_right", // mui ten cong nhe len-phai
+        0x0040404024102000UL to "slight_left",  // mui ten cong nhe len-trai
+        0x000404c881ca0000UL to "roundabout",   // vong tron + mui ten thoat phai
+        0x0040408410a40000UL to "roundabout",   // vong tron + mui ten thoat trai
+        0x00204088520a1000UL to "roundabout",   // vong tron + mui ten thoat len-trai
+        0x0010204420542010UL to "roundabout",   // vong tron + mui ten thoat thang len
+        0x0044283054201000UL to "merge",        // hinh chu Y nhap lan, mui ten len
+        0x0008081090a4c000UL to "exit_right",   // nga re co nhanh phai sang mau (ra loi/exit highway)
+        0x00202030728a1000UL to "exit_left",    // nga re co nhanh trai sang mau
+        0x0028202828482800UL to "arrive",       // hinh cham/pin + mui ten xuong (diem den)
     )
 
     /** So bit khac nhau toi da van coi la "khop" - chong lech nhe do resize/nen. */

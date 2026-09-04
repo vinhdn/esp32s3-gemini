@@ -48,6 +48,18 @@ class ImageRelayBle(private val context: Context) {
         // VMSL/VMSX (xem ghi chú trong CarHostForegroundService) — tăng delay
         // để board có thời gian giải phóng buffer giữa các chunk.
         private const val INTER_CHUNK_DELAY_MS = 15L
+
+        // Backoff khi connect() lặp lại thất bại (status=133 - lỗi chung
+        // chung của Android BLE stack, hay gặp khi thử kết nối lại quá dồn
+        // dập trong lúc stack đang "kẹt"/chưa kịp giải phóng tài nguyên sau
+        // lần thất bại trước). Retry cố định 2s trước đây VÔ TÌNH lại là
+        // chính nguyên nhân duy trì trạng thái kẹt (xác nhận thực tế: nhiều
+        // lần status=133 lặp mãi tới khi restart hẳn điện thoại) - lùi dần
+        // cho stack có thời gian tự hồi phục, reset về mức thấp ngay khi
+        // connect thành công 1 lần.
+        private const val RECONNECT_DELAY_MIN_MS = 2000L
+        private const val RECONNECT_DELAY_MAX_MS = 30000L
+        private const val CONSECUTIVE_FAILURES_WARN = 6
     }
 
     @Volatile
@@ -72,6 +84,16 @@ class ImageRelayBle(private val context: Context) {
     private var currentMtu = 23
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    // So lan that bai connect lien tiep (reset ve 0 ngay khi connect thanh
+    // cong) - dung tinh backoff luy thua, xem RECONNECT_DELAY_MIN/MAX_MS.
+    @Volatile
+    private var consecutiveFailures = 0
+
+    private fun nextReconnectDelayMs(): Long {
+        val delay = RECONNECT_DELAY_MIN_MS * (1L shl consecutiveFailures.coerceAtMost(6))
+        return delay.coerceAtMost(RECONNECT_DELAY_MAX_MS)
+    }
+
     @Volatile
     private var wanted = false
 
@@ -91,6 +113,7 @@ class ImageRelayBle(private val context: Context) {
         writeCharacteristic = null
         isConnected = false
         isConnecting = false
+        consecutiveFailures = 0
         _bleState.value = BleState(connectionState = BleConnectionState.DISCONNECTED)
     }
 
@@ -161,7 +184,20 @@ class ImageRelayBle(private val context: Context) {
                         connectionState = BleConnectionState.DISCONNECTED,
                         lastError = if (status != BluetoothGatt.GATT_SUCCESS) "Disconnected (status $status)" else null
                     )
-                    if (wanted) mainHandler.postDelayed({ startScan() }, 2000)
+                    // status != SUCCESS (vd 133) la connect that bai THAT, khac
+                    // voi disconnect binh thuong (status=0, vd board reboot/tat
+                    // nguon) - chi backoff cho truong hop that bai that, ket
+                    // noi binh thuong bi mat (board restart) van retry nhanh.
+                    if (status != BluetoothGatt.GATT_SUCCESS) {
+                        consecutiveFailures++
+                        if (consecutiveFailures == CONSECUTIVE_FAILURES_WARN) {
+                            Log.e(TAG, "⚠️ $consecutiveFailures lần connect liên tiếp thất bại (status=$status) - " +
+                                "có thể Bluetooth stack của máy đang kẹt, cần tắt/bật Bluetooth hoặc restart điện thoại")
+                        }
+                    } else {
+                        consecutiveFailures = 0
+                    }
+                    if (wanted) mainHandler.postDelayed({ startScan() }, nextReconnectDelayMs())
                 }
             }
         }
@@ -187,6 +223,7 @@ class ImageRelayBle(private val context: Context) {
             }
             writeCharacteristic = chr
             isConnected = true
+            consecutiveFailures = 0
             _bleState.value = BleState(
                 connectionState = BleConnectionState.CONNECTED,
                 deviceName = g.device?.name ?: TARGET_DEVICE_NAME,
