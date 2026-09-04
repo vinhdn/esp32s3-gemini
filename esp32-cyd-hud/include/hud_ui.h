@@ -58,6 +58,22 @@ void hud_clear_warnings(void);
 void hud_set_nav(const hud_nav_t *nav);           /* enters navigation mode */
 void hud_nav_stop(void);                          /* back to lane-keeping animation */
 
+typedef enum {
+    HUD_WEATHER_NONE,   /* khong co du lieu - hien "--", an icon */
+    HUD_WEATHER_SUNNY,
+    HUD_WEATHER_CLOUDY,
+    HUD_WEATHER_RAIN,
+    HUD_WEATHER_STORM,
+    HUD_WEATHER_SNOW,
+} hud_weather_t;
+
+/* Du bao thoi tiet hom nay/ngay mai, hien duoi cum "CANH BAO TIEP" (nua trai):
+ * nhiet do (so) phia tren, icon dieu kien phia duoi - khong hien chu
+ * "Hom nay/Ngay mai". today_cond/tomorrow_cond = HUD_WEATHER_NONE -> hien
+ * "--" khong icon (giu bo cuc on dinh, giong sign_limit). */
+void hud_set_weather(int8_t today_temp_c, hud_weather_t today_cond,
+                      int8_t tomorrow_temp_c, hud_weather_t tomorrow_cond);
+
 #ifdef __cplusplus
 }
 #endif

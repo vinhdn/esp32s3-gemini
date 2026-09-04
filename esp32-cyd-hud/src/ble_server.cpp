@@ -133,11 +133,21 @@ static char s_line_buf[JSON_LINE_MAX];
 static size_t s_line_len = 0;
 static bool s_line_overflow = false;
 
+// QUAN TRONG: LUON ghi de (xoa rong neu field khong co trong JSON nay), KHONG
+// giu nguyen gia tri cu - moi frame "nav" la 1 SNAPSHOT DAY DU trang thai
+// hien tai cua Google Maps, khong phai 1 phan cap nhat them vao. App Android
+// (onGoogleMapsNavUpdate) chi bo qua key nao dang RONG luc gui, khong co
+// nghia la "giu nguyen gia tri truoc". Neu giu nguyen se bi dinh du lieu cu
+// (da xac nhan qua bao cao that: text "Dang bat dau chi duong..." dinh mai
+// khong bi thay the khi co du lieu dan duong that vi cac ban tin sau khong
+// co key "instruction").
 static void copy_field(char *dst, size_t dst_size, JsonVariantConst v)
 {
     if (v.is<const char *>()) {
         strncpy(dst, v.as<const char *>(), dst_size - 1);
         dst[dst_size - 1] = 0;
+    } else {
+        dst[0] = 0;
     }
 }
 

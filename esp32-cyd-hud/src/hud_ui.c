@@ -11,6 +11,7 @@
 static lv_obj_t *scr;
 static lv_obj_t *lbl_speed, *sign_limit, *lbl_limit;
 static lv_obj_t *warn_box[2], *warn_icon[2], *warn_dist[2], *warn_name[2];
+static lv_obj_t *weather_temp[2], *weather_icon[2];
 
 static lv_obj_t *nav_panel, *nav_icon, *nav_dist, *nav_turn, *nav_street, *nav_hint;
 static lv_obj_t *m_remain, *m_eta, *m_arrive;
@@ -115,6 +116,20 @@ static void build_left(void)
 
         lv_obj_add_flag(warn_box[i], LV_OBJ_FLAG_HIDDEN);
     }
+
+    /* Thoi tiet hom nay/ngay mai - 2 cot nho ngay duoi cum canh bao (warn_box
+     * ket thuc o y=118+70=188 tinh trong vung noi dung da padding): nhiet do
+     * phia tren, icon dieu kien phia duoi, khong chu "Hom nay/Ngay mai". */
+    for (int i = 0; i < 2; i++) {
+        weather_temp[i] = label(col, "--", HUD_F_SMALL, HUD_C_TEXT);
+        lv_obj_align(weather_temp[i], LV_ALIGN_TOP_LEFT, i * 66 + 4, 188);
+
+        weather_icon[i] = lv_image_create(col);
+        lv_image_set_src(weather_icon[i], &icon_weather_sunny);
+        lv_obj_align(weather_icon[i], LV_ALIGN_TOP_LEFT, i * 66, 202);
+        icon_tint(weather_icon[i], HUD_C_TEXT_DIM);
+        lv_obj_add_flag(weather_icon[i], LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 /* ---------- navigation half ---------- */
@@ -157,6 +172,11 @@ static void build_nav(void)
 
     nav_street = label(nav_panel, "", HUD_F_TEXT, HUD_C_TEXT);
     lv_obj_set_width(nav_street, HUD_RIGHT_W - 20);
+    // LONG_DOT can wrap trước khi rut gon "..." neu khong co CHIEU CAO co
+    // dinh - ten duong dai se tran thanh 2 dong, de len nav_hint ngay ben
+    // duoi (da xac nhan qua bao cao that: "bi ten duong che neu ten duong 2
+    // dong"). Ep 1 dong bang chieu cao dung dung 1 line cua font nay.
+    lv_obj_set_height(nav_street, lv_font_get_line_height(HUD_F_TEXT));
     lv_label_set_long_mode(nav_street, LV_LABEL_LONG_DOT);
     lv_obj_align(nav_street, LV_ALIGN_TOP_LEFT, 0, 66);
 
@@ -225,10 +245,10 @@ static void build_lane(void)
     lv_image_set_src(car, &car_top);
     lv_obj_align(car, LV_ALIGN_TOP_MID, 0, HUD_CAR_Y);
 
-    lv_obj_t *foot = caption(lane_panel, "GIỮ LÀN");
-    lv_obj_align(foot, LV_ALIGN_BOTTOM_LEFT, 10, -8);
+    lv_obj_t *foot = caption(lane_panel, "MAPS");
+    lv_obj_align(foot, LV_ALIGN_BOTTOM_LEFT, 5, -5);
     lv_obj_t *foot2 = caption(lane_panel, "KHÔNG DẪN ĐƯỜNG");
-    lv_obj_align(foot2, LV_ALIGN_BOTTOM_RIGHT, -10, -8);
+    lv_obj_align(foot2, LV_ALIGN_BOTTOM_RIGHT, -5, -5);
 
     /* dash scroll: one period upward, looped */
     lv_anim_init(&lane_anim);
@@ -278,9 +298,13 @@ void hud_set_speed_limit(uint16_t kmh)
 {
     char buf[8];
     cur_limit = kmh;
-    if (kmh == 0) { lv_obj_add_flag(sign_limit, LV_OBJ_FLAG_HIDDEN); }
-    else {
-        lv_obj_clear_flag(sign_limit, LV_OBJ_FLAG_HIDDEN);
+    // Luon hien bien bao (khong an) - khi khong co so thi hien "!" giong dung
+    // quy uoc placeholder cua chinh app VietMap Live (xem hoi thoai truoc:
+    // bong bong that hien "!" o vi tri nay khi chua xac dinh duoc bien bao).
+    lv_obj_clear_flag(sign_limit, LV_OBJ_FLAG_HIDDEN);
+    if (kmh == 0) {
+        lv_label_set_text(lbl_limit, "!");
+    } else {
         snprintf(buf, sizeof(buf), "%u", (unsigned)kmh);
         lv_label_set_text(lbl_limit, buf);
     }
@@ -364,4 +388,38 @@ void hud_nav_stop(void)
 {
     lv_obj_add_flag(nav_panel, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(lane_panel, LV_OBJ_FLAG_HIDDEN);
+}
+
+static const lv_image_dsc_t *weather_icon_src(hud_weather_t w)
+{
+    switch (w) {
+        case HUD_WEATHER_SUNNY:  return &icon_weather_sunny;
+        case HUD_WEATHER_CLOUDY: return &icon_weather_cloudy;
+        case HUD_WEATHER_RAIN:   return &icon_weather_rain;
+        case HUD_WEATHER_STORM:  return &icon_weather_storm;
+        case HUD_WEATHER_SNOW:   return &icon_weather_snow;
+        default: return NULL;
+    }
+}
+
+static void set_weather_slot(int i, int8_t temp_c, hud_weather_t cond)
+{
+    const lv_image_dsc_t *src = weather_icon_src(cond);
+    if (cond == HUD_WEATHER_NONE || src == NULL) {
+        lv_label_set_text(weather_temp[i], "--");
+        lv_obj_add_flag(weather_icon[i], LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d°", (int)temp_c);
+    lv_label_set_text(weather_temp[i], buf);
+    lv_image_set_src(weather_icon[i], src);
+    lv_obj_clear_flag(weather_icon[i], LV_OBJ_FLAG_HIDDEN);
+}
+
+void hud_set_weather(int8_t today_temp_c, hud_weather_t today_cond,
+                      int8_t tomorrow_temp_c, hud_weather_t tomorrow_cond)
+{
+    set_weather_slot(0, today_temp_c, today_cond);
+    set_weather_slot(1, tomorrow_temp_c, tomorrow_cond);
 }

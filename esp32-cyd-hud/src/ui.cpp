@@ -89,6 +89,61 @@ void ui_init()
     hud_ui_init();
 }
 
+// Chuoi "thoi gian con lai" tu Google Maps co the dai ("1 gio 20 phut"/
+// "1 hr 20 min") - khong vua o cot "T.GIAN" hep 56px. Rut gon ve dang
+// "Xh:Yp" ("1h:20p") - giu nguyen chuoi goc neu khong khop mau nao (an toan
+// hon la mat du lieu).
+static char s_time_short_buf[16];
+
+static const char *format_time_short(const char *raw)
+{
+    if (!raw || !raw[0]) return nullptr;
+
+    // Chuan hoa NBSP (0xC2 0xA0, Google hay dung giua so va don vi) thanh
+    // dau cach thuong de cac mau sscanf ben duoi khop duoc.
+    char norm[40];
+    size_t oi = 0;
+    for (size_t i = 0; raw[i] && oi < sizeof(norm) - 1; ++i) {
+        if ((uint8_t)raw[i] == 0xC2 && (uint8_t)raw[i + 1] == 0xA0) {
+            norm[oi++] = ' ';
+            ++i;
+        } else {
+            norm[oi++] = raw[i];
+        }
+    }
+    norm[oi] = 0;
+
+    int h = 0, m = 0;
+    if (sscanf(norm, "%d giờ %d phút", &h, &m) == 2 ||
+        sscanf(norm, "%d hr %d min", &h, &m) == 2) {
+        snprintf(s_time_short_buf, sizeof(s_time_short_buf), "%dh:%02dp", h, m);
+        return s_time_short_buf;
+    }
+    if (sscanf(norm, "%d phút", &m) == 1 || sscanf(norm, "%d min", &m) == 1) {
+        snprintf(s_time_short_buf, sizeof(s_time_short_buf), "%dp", m);
+        return s_time_short_buf;
+    }
+    if (sscanf(norm, "%d giờ", &h) == 1 || sscanf(norm, "%d hr", &h) == 1) {
+        snprintf(s_time_short_buf, sizeof(s_time_short_buf), "%dh", h);
+        return s_time_short_buf;
+    }
+    return raw; // khong khop mau nao - giu nguyen chuoi goc
+}
+
+// Dieu kien thoi tiet VMSX (0=nang,1=may,2=mua,3=giong,4=tuyet/suong) - xem
+// waze_hud_ble.c/ble_server.cpp - dich sang enum icon cua hud_ui.
+static hud_weather_t weather_condition_to_icon(uint8_t c)
+{
+    switch (c) {
+        case 0: return HUD_WEATHER_SUNNY;
+        case 1: return HUD_WEATHER_CLOUDY;
+        case 2: return HUD_WEATHER_RAIN;
+        case 3: return HUD_WEATHER_STORM;
+        case 4: return HUD_WEATHER_SNOW;
+        default: return HUD_WEATHER_NONE;
+    }
+}
+
 static hud_turn_t direction_to_turn(const char *dir)
 {
     if (!dir) return HUD_TURN_STRAIGHT;
@@ -134,6 +189,10 @@ void ui_refresh()
         hud_set_warning(1, HUD_WARN_NONE, 0);
     }
 
+    hud_set_weather(
+        s.today_temp_c, s.today_weather_valid ? weather_condition_to_icon(s.today_condition) : HUD_WEATHER_NONE,
+        s.tomorrow_temp_c, s.tomorrow_weather_valid ? weather_condition_to_icon(s.tomorrow_condition) : HUD_WEATHER_NONE);
+
     if (s.nav_active) {
         hud_nav_t nav = {};
         nav.turn = direction_to_turn(s.nav_direction);
@@ -141,7 +200,7 @@ void ui_refresh()
         nav.street = s.nav_road;
         nav.hint = s.nav_instruction;
         nav.remain = s.nav_total_dist[0] ? s.nav_total_dist : nullptr;
-        nav.time_remaining = s.nav_time_remaining[0] ? s.nav_time_remaining : nullptr;
+        nav.time_remaining = format_time_short(s.nav_time_remaining);
         nav.arrive_hhmm = s.nav_eta[0] ? s.nav_eta : nullptr;
         hud_set_nav(&nav);
     } else {
