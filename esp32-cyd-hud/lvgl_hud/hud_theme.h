@@ -35,24 +35,30 @@
 #define HUD_FONTS_STUB 1
 
 #if HUD_FONTS_STUB
-  #define HUD_F_SPEED   &lv_font_montserrat_48
-  #define HUD_F_DIST    &lv_font_montserrat_38
-  #define HUD_F_LIMIT   &lv_font_montserrat_24
+  #define HUD_F_SPEED    &lv_font_montserrat_48
+  #define HUD_F_SPEED_SM &lv_font_montserrat_48
+  #define HUD_F_DIST     &lv_font_montserrat_34
+  #define HUD_F_LIMIT    &lv_font_montserrat_24
+  #define HUD_F_LIMIT_LG &lv_font_montserrat_40
   #define HUD_F_METRIC  &lv_font_montserrat_16
   #define HUD_F_TEXT    &lv_font_montserrat_14
   #define HUD_F_SMALL   &lv_font_montserrat_12
   #define HUD_F_LABEL   &lv_font_montserrat_10
 #else
   LV_FONT_DECLARE(hud_num_62)
-  LV_FONT_DECLARE(hud_num_38)
+  LV_FONT_DECLARE(hud_num_50)
+  LV_FONT_DECLARE(hud_num_39)
+  LV_FONT_DECLARE(hud_num_34)
   LV_FONT_DECLARE(hud_num_24)
   LV_FONT_DECLARE(hud_num_16)
   LV_FONT_DECLARE(hud_text_13)
   LV_FONT_DECLARE(hud_text_11)
   LV_FONT_DECLARE(hud_label_9)
-  #define HUD_F_SPEED   &hud_num_62
-  #define HUD_F_DIST    &hud_num_38
-  #define HUD_F_LIMIT   &hud_num_24
+  #define HUD_F_SPEED    &hud_num_62
+  #define HUD_F_SPEED_SM &hud_num_50
+  #define HUD_F_DIST     &hud_num_34
+  #define HUD_F_LIMIT    &hud_num_24
+  #define HUD_F_LIMIT_LG &hud_num_39
   #define HUD_F_METRIC  &hud_num_16
   #define HUD_F_TEXT    &hud_text_13
   #define HUD_F_SMALL   &hud_text_11

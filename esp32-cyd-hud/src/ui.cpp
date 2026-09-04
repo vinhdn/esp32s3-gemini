@@ -134,6 +134,18 @@ void ui_refresh()
         hud_set_warning(1, HUD_WARN_NONE, 0);
     }
 
+    // Du bao 5 ngay (frame VWXF, doc lap voi VietMap - xem ble_server.cpp).
+    // Board khong co RTC/dong bo gio nen khong tu biet duoc thu may - dung
+    // nhan chung "NAY/MAI/+2/+3/+4" (WeatherManager.kt gui index 0=hom nay).
+    if (s.forecast_valid) {
+        static const char *kForecastLabel[HUD_FORECAST_DAYS] = { "NAY", "MAI", "+2", "+3", "+4" };
+        for (int i = 0; i < HUD_FORECAST_DAYS; i++) {
+            hud_set_forecast(i, kForecastLabel[i], s.forecast_condition[i], s.forecast_temp_c[i]);
+        }
+    } else {
+        hud_clear_forecast();
+    }
+
     if (s.nav_active) {
         hud_nav_t nav = {};
         nav.turn = direction_to_turn(s.nav_direction);

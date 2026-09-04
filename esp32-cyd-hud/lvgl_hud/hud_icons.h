@@ -25,6 +25,10 @@ extern const lv_image_dsc_t icon_exit_right; /* 52x52 A8 */
 extern const lv_image_dsc_t icon_roundabout; /* 52x52 A8 */
 extern const lv_image_dsc_t icon_arrive; /* 52x52 A8 */
 
+/* TPMS markers (10x10) */
+extern const lv_image_dsc_t icon_tri_up; /* 10x10 A8 */
+extern const lv_image_dsc_t icon_tri_down; /* 10x10 A8 */
+
 #ifdef __cplusplus
 }
 #endif

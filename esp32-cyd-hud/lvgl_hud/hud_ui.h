@@ -21,13 +21,29 @@ typedef enum {
     HUD_TURN_ARRIVE,        /* den dich */
 } hud_turn_t;
 
+/* Upcoming road signs, drawn in their real shape and colours. */
 typedef enum {
-    HUD_WARN_NONE,
-    HUD_WARN_SPEEDCAM,      /* ban toc do */
-    HUD_WARN_PEDESTRIAN,    /* nguoi di bo */
-    HUD_WARN_ROUGH_ROAD,    /* duong xau */
-    HUD_WARN_SHARP_CURVE,   /* cua gap */
-} hud_warn_t;
+    HUD_SIGN_NONE,
+    HUD_SIGN_SPEEDCAM,       /* tron  - ban toc do      */
+    HUD_SIGN_NO_OVERTAKE,    /* tron  - cam vuot        */
+    HUD_SIGN_NO_HORN,        /* tron  - cam bam con     */
+    HUD_SIGN_PEDESTRIAN,     /* tamgc - nguoi di bo     */
+    HUD_SIGN_SHARP_CURVE,    /* tamgc - cua gap         */
+    HUD_SIGN_ROUGH_ROAD,     /* tamgc - duong xau       */
+    HUD_SIGN_CHILDREN,       /* tamgc - tre em          */
+    HUD_SIGN_TRAFFIC_LIGHT,  /* tamgc - den tin hieu    */
+} hud_sign_t;
+
+typedef enum {
+    HUD_WX_SUN,
+    HUD_WX_PARTLY,
+    HUD_WX_CLOUD,
+    HUD_WX_RAIN,
+    HUD_WX_STORM,
+    HUD_WX_FOG,
+} hud_wx_t;
+
+#define HUD_WX_DAYS  5
 
 typedef struct {
     hud_turn_t  turn;
@@ -42,14 +58,28 @@ typedef struct {
 /* Build the whole screen once, on the active display. */
 void hud_ui_init(void);
 
-/* --- Runtime API ------------------------------------------------------- */
+/* --- Left column ------------------------------------------------------- */
 void hud_set_speed(uint16_t kmh);                 /* turns red above the limit */
 void hud_set_speed_limit(uint16_t kmh);           /* 0 = unknown -> sign hidden */
-void hud_set_warning(uint8_t slot, hud_warn_t w, uint16_t dist_m); /* slot 0..1 */
-void hud_clear_warnings(void);
 
-void hud_set_nav(const hud_nav_t *nav);           /* enters navigation mode */
-void hud_nav_stop(void);                          /* back to lane-keeping animation */
+/* Two upcoming signs, slot 0 = nearest (it pulses). dist_m < 1000 shows "m",
+ * above that "x,y" + "km". HUD_SIGN_NONE hides the slot. */
+void hud_set_sign(uint8_t slot, hud_sign_t sign, uint16_t dist_m);
+void hud_clear_signs(void);
+
+/* Five-day forecast strip. day: 0 = today (label is highlighted).
+ * label is a 2-3 char weekday ("T6", "CN"); temp_c is the daily high. */
+void hud_set_forecast(uint8_t day, const char *label, hud_wx_t cond, int8_t temp_c);
+
+/* --- Right half -------------------------------------------------------- */
+void hud_set_nav(const hud_nav_t *nav);           /* navigation view */
+void hud_nav_stop(void);                          /* back to the map view */
+
+/* Map view: current street name and the scale-bar caption ("200 m"). */
+void hud_map_set_street(const char *street);
+void hud_map_set_scale(const char *txt);
+/* Heading of the position marker, 0-359 degrees, 0 = north / up. */
+void hud_map_set_heading(uint16_t deg);
 
 #ifdef __cplusplus
 }

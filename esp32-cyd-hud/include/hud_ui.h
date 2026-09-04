@@ -58,6 +58,14 @@ void hud_clear_warnings(void);
 void hud_set_nav(const hud_nav_t *nav);           /* enters navigation mode */
 void hud_nav_stop(void);                          /* back to lane-keeping animation */
 
+/* 5-day forecast strip, bottom of the left column. slot 0..4 (0 = today).
+ * condition: 0=nang,1=may,2=mua,3=giong,4=tuyet/suong (cung thang voi
+ * hud_state_t.forecast_condition[] / WeatherManager.kt CONDITION_*). Khong
+ * co icon rieng (chua co asset trong build nay) - mau chu tinh theo condition
+ * thay cho glyph. label toi da 3 ky tu ("NAY", "MAI", "+2"...). */
+void hud_set_forecast(uint8_t slot, const char *label, uint8_t condition, int8_t temp_c);
+void hud_clear_forecast(void);
+
 #ifdef __cplusplus
 }
 #endif

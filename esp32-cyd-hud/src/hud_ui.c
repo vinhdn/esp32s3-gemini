@@ -18,6 +18,8 @@ static lv_obj_t *m_remain, *m_eta, *m_arrive;
 static lv_obj_t *lane_panel, *lane_track[3], *car;
 static lv_anim_t lane_anim, car_anim;
 
+static lv_obj_t *fx_label[5], *fx_temp[5];
+
 static uint16_t cur_speed = 0, cur_limit = 0;
 
 /* ---------- small helpers ---------- */
@@ -114,6 +116,21 @@ static void build_left(void)
         lv_obj_align(warn_name[i], LV_ALIGN_BOTTOM_MID, 0, -6);
 
         lv_obj_add_flag(warn_box[i], LV_OBJ_FLAG_HIDDEN);
+    }
+
+    /* 5-day forecast strip - 5 columns, 26 px pitch (khong co icon rieng,
+     * chua co asset trong build nay - mau chu nhiet do tinh theo condition
+     * thay cho glyph, xem hud_set_forecast()). */
+    for (int i = 0; i < 5; i++) {
+        lv_obj_t *fc = plain(col);
+        lv_obj_set_size(fc, 24, 30);
+        lv_obj_align(fc, LV_ALIGN_TOP_LEFT, i * 26, 196);
+
+        fx_label[i] = caption(fc, "");
+        lv_obj_align(fx_label[i], LV_ALIGN_TOP_LEFT, 0, 0);
+
+        fx_temp[i] = label(fc, "--", HUD_F_SMALL, HUD_C_TEXT);
+        lv_obj_align(fx_temp[i], LV_ALIGN_TOP_LEFT, 0, 13);
     }
 }
 
@@ -364,4 +381,37 @@ void hud_nav_stop(void)
 {
     lv_obj_add_flag(nav_panel, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(lane_panel, LV_OBJ_FLAG_HIDDEN);
+}
+
+void hud_set_forecast(uint8_t slot, const char *label_txt, uint8_t condition, int8_t temp_c)
+{
+    if (slot > 4) return;
+    lv_label_set_text(fx_label[slot], label_txt ? label_txt : "");
+
+    /* Khong dung ky hieu "do" (U+00B0) - hud_text_11 chi generate voi tap
+     * ky tu Latin+Viet trong README, khong chac co glyph do, ve o trong neu
+     * thieu. So thuan tuy la an toan nhat. */
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d", (int)temp_c);
+    lv_label_set_text(fx_temp[slot], buf);
+
+    lv_color_t c;
+    switch (condition) {
+        case 0: c = HUD_C_AMBER; break; /* nang */
+        case 2: c = HUD_C_CYAN;  break; /* mua */
+        case 3: c = HUD_C_AMBER; break; /* giong */
+        case 1:                         /* may */
+        case 4:                         /* tuyet/suong */
+        default: c = HUD_C_TEXT_DIM; break;
+    }
+    lv_obj_set_style_text_color(fx_temp[slot], c, 0);
+}
+
+void hud_clear_forecast(void)
+{
+    for (int i = 0; i < 5; i++) {
+        lv_label_set_text(fx_label[i], "");
+        lv_label_set_text(fx_temp[i], "--");
+        lv_obj_set_style_text_color(fx_temp[i], HUD_C_TEXT, 0);
+    }
 }

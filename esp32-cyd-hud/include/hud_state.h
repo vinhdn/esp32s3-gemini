@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#define HUD_FORECAST_DAYS 5
+
 // Trang thai HUD hien tai - mirror dung cac truong cua frame "VMSX" v3 (xem
 // ble_server.h/.cpp de biet cach parse). Ghi tu callback BLE (co the chay tren
 // task cua NimBLE), doc tu task LVGL - LUON truy cap qua hud_state_lock()/
@@ -29,6 +31,15 @@ typedef struct {
     bool     tomorrow_weather_valid;
     int8_t   tomorrow_temp_c;
     uint8_t  tomorrow_condition;
+
+    // Du bao 5 ngay - frame "VWXF" RIENG, gui doc lap khong phu thuoc VietMap
+    // (xem ble_server.cpp: parse_vwxf(); Android: WeatherManager.kt
+    // buildForecastFrame()/startIndependentBleUpdates()). Khac voi
+    // today_/tomorrow_weather_* o tren (van nhung trong VMSX, gan voi
+    // VietMap) - 2 duong du lieu nay doc lap, khong ghi de len nhau.
+    bool     forecast_valid;
+    int8_t   forecast_temp_c[HUD_FORECAST_DAYS];
+    uint8_t  forecast_condition[HUD_FORECAST_DAYS];
 
     uint8_t  nav_state;
     bool     hud_flipped;         // frame VHUD - lat man hinh 180 do

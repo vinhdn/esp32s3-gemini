@@ -105,6 +105,32 @@ static void parse_vhud(const uint8_t *d, size_t len)
     hud_state_unlock();
 }
 
+// "VWXF" v1 (17 byte, HUD_FORECAST_DAYS=5): magic(0-3) version(4)=1
+// dayCount(5)=5 [temp(int8) condition(uint8)]*dayCount(6..15) checksum(16).
+// Frame RIENG, khong lien quan VMSX/VietMap - xem WeatherManager.kt
+// (buildForecastFrame()/startIndependentBleUpdates(), gui doc lap qua
+// ImageRelayBle.sendRawFrame trong BleForegroundService, khong phu thuoc
+// VietmapAccessibilityService bat duoc bong bong hay khong).
+static void parse_vwxf(const uint8_t *d, size_t len)
+{
+    if (len < 7) return;
+    if (d[4] != 1) return; // version khong ho tro
+    uint8_t day_count = d[5];
+    if (day_count == 0 || day_count > HUD_FORECAST_DAYS) return;
+    size_t expected_len = 6 + (size_t)day_count * 2 + 1;
+    if (len != expected_len) return;
+    if (xor_checksum(d, expected_len - 1) != d[expected_len - 1]) return;
+
+    hud_state_lock();
+    for (uint8_t i = 0; i < day_count; ++i) {
+        g_hud_state.forecast_temp_c[i] = (int8_t)d[6 + i * 2];
+        g_hud_state.forecast_condition[i] = d[6 + i * 2 + 1];
+    }
+    g_hud_state.forecast_valid = true;
+    g_hud_state.last_update_ms = millis();
+    hud_state_unlock();
+}
+
 static void handle_frame(const uint8_t *data, size_t len)
 {
     if (len < 4) return;
@@ -114,6 +140,8 @@ static void handle_frame(const uint8_t *data, size_t len)
         parse_vmsl(data, len);
     } else if (memcmp(data, "VHUD", 4) == 0) {
         parse_vhud(data, len);
+    } else if (memcmp(data, "VWXF", 4) == 0) {
+        parse_vwxf(data, len);
     }
     // Magic khac (vd chunk anh JPEG bong bong - hien khong dung o app, xem
     // plan) - bo qua, khong phai loi.

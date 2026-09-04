@@ -1,16 +1,21 @@
 # LVGL HUD 320x240 (LVGL 9.x, ESP32 + Arduino, RGB565)
 
-Code port of `HUD 320x240.dc.html`. Same geometry: left column 150 px
-(speed + limit sign + 2 warnings), 1 px divider, right half 169 px
-(navigation, or the lane-keeping animation when there is no route).
+Code port of `HUD 320x240.dc.html`. Panel is exactly 320 x 240 (`HUD_SCR_W/H`).
+Left column 150 px (speed + limit sign + 2 upcoming road signs + 5-day
+forecast), 1 px divider, right half 169 px. Horizontal padding is 5 px
+throughout (`PAD` in `hud_ui.c`).
+
+The map is present in **both** modes: a 159 x 108 inset in navigation (below the
+manoeuvre block, running to the bottom edge) and full-height when no route is active.
 
 ## Files
 | File | Purpose |
 |---|---|
 | `hud_theme.h` | colours, geometry, font macros |
 | `hud_ui.h/.c` | screen build + runtime API |
-| `hud_lane_assets.h/.c` | car sprite + lane dash sprites for the lane-keeping animation |
-| `hud_icons.h/.c` | 16 icons as `lv_image_dsc_t`, `LV_COLOR_FORMAT_A8` (recolourable) |
+| `hud_signs.h/.c` | 8 road signs (34x34 RGB565A8) + 6 weather glyphs (17x17 A8) |
+| `hud_map_assets.h/.c` | map tile, position arrow, north needle |
+| `hud_icons.h/.c` | 12 direction arrows + 4 legacy warning glyphs, A8 (recolourable) |
 | `hud_320x240.ino` | Arduino sketch: TFT_eSPI display driver + demo state |
 | `assets/png/*.png` | same icons as PNG, if you prefer to re-convert yourself |
 | `assets/svg/*.svg` | icon sources |
@@ -26,7 +31,8 @@ Code port of `HUD 320x240.dc.html`. Same geometry: left column 150 px
    #define LV_FONT_MONTSERRAT_14 1
    #define LV_FONT_MONTSERRAT_16 1
    #define LV_FONT_MONTSERRAT_24 1
-   #define LV_FONT_MONTSERRAT_38 1
+   #define LV_FONT_MONTSERRAT_34 1
+   #define LV_FONT_MONTSERRAT_40 1
    #define LV_FONT_MONTSERRAT_48 1
    ```
    If your panel needs byte-swapped RGB565, keep `tft.pushColors(..., true)`
@@ -52,7 +58,9 @@ Sizes and character ranges required:
 | Font symbol | Family | Size | Ranges |
 |---|---|---|---|
 | `hud_num_62` | Barlow Condensed SemiBold | 62 | digits `0-9`, `,` `.` space |
-| `hud_num_38` | Barlow Condensed SemiBold | 38 | digits, `,` space, `km` `m` |
+| `hud_num_50` | Barlow Condensed SemiBold | 50 | digits (current speed) |
+| `hud_num_39` | Barlow Condensed Bold | 39 | digits (speed-limit sign) |
+| `hud_num_34` | Barlow Condensed SemiBold | 34 | digits, `,` space, `km` `m` |
 | `hud_num_24` | Barlow Condensed Bold | 24 | digits |
 | `hud_num_16` | Barlow Condensed SemiBold | 16 | digits, `,` `:` space, `km` `ph` |
 | `hud_text_13` | Chakra Petch SemiBold | 13 | Latin + Vietnamese subset |
@@ -79,48 +87,80 @@ Vietnamese from the mockup ("TỐC ĐỘ", "CẢNH BÁO TIẾP", "RẼ PHẢI", 
 hud_ui_init();
 hud_set_speed_limit(60);            /* 0 = unknown, hides the sign */
 hud_set_speed(62);                  /* > limit -> number turns red */
-hud_set_warning(0, HUD_WARN_SPEEDCAM, 400);
-hud_set_warning(1, HUD_WARN_PEDESTRIAN, 1200);
-hud_clear_warnings();
+
+hud_set_sign(0, HUD_SIGN_SPEEDCAM, 400);     /* slot 0 = nearest, pulses */
+hud_set_sign(1, HUD_SIGN_PEDESTRIAN, 1200);
+hud_clear_signs();
+
+hud_set_forecast(0, "NAY", HUD_WX_SUN, 33);  /* day 0 = today, cyan label */
+hud_set_forecast(1, "T6", HUD_WX_RAIN, 28);
 
 hud_nav_t nav = { HUD_TURN_RIGHT, 300, "Nguyen Trai", "Di lan ben phai...", 84, 12, "14:32" };
 hud_set_nav(&nav);                  /* navigation half */
-hud_nav_stop();                     /* lane-keeping animation instead */
+hud_nav_stop();                     /* map view instead */
+hud_map_set_street("Tran Duy Hung");
+hud_map_set_scale("200 m");
+hud_map_set_heading(0);             /* rotates the position arrow */
 ```
 
-Warning slot 0 is drawn amber/urgent for `HUD_WARN_SPEEDCAM`, neutral grey
-otherwise. Distances < 1000 render as `m`, above as `x.y km`.
+## Upcoming road signs
+Two slots on one 140 px row, each 34 px sign + distance stacked to its right
+(number 16 px, unit 9 px). Signs are drawn in their real shape and colours,
+so they are **RGB565A8 and must not be recoloured**:
 
-## Icons
-A8 (alpha-only) format: 1 byte per pixel, tinted at runtime with
-`lv_obj_set_style_image_recolor()`. 4 warnings at 30x26 + 12 direction arrows
-at 52x52 = ~35 kB flash. Drop the arrows you do not use to save space.
+| Symbol | Shape |
+|---|---|
+| `sign_speedcam`, `sign_no_overtake`, `sign_no_horn` | white disc, red ring, black glyph |
+| `sign_pedestrian`, `sign_sharp_curve`, `sign_rough_road`, `sign_children`, `sign_traffic_light` | yellow triangle, red border, black glyph |
 
-Direction set, one per `hud_turn_t` value: `straight`, `turn_left`,
-`turn_right`, `slight_left`, `slight_right`, `sharp_left`, `sharp_right`,
-`u_turn`, `merge`, `exit_right`, `roundabout`, `arrive`. To use RGB565A8 or a different format instead, re-convert
-`assets/png/*.png` with the LVGL online image converter.
+Slot 0 pulses between full and 50 % opacity on an 800 ms `lv_anim`.
+Distances under 1000 m render as `400` + `m`, above as `1,2` + `km`. To add a
+sign, drop an SVG in `assets/svg/`, re-run the converter, and extend
+`hud_sign_t` plus the switch in `hud_set_sign()`.
 
-## Lane-keeping animation resources
-`hud_lane_assets.c` holds three sprites and the geometry defines used by
-`build_lane()`:
+## 5-day forecast
+Bottom of the left column: five 26 px columns (28 px pitch) with a weekday
+label in a **fixed 10 px box**, a 17 px glyph and the daily high. The fixed
+label box is deliberate - it keeps all five icons and temperatures on one
+baseline even when a label is longer. Day 0's label is cyan. Glyphs are A8 and
+tinted per condition: sun/partly/storm amber, rain cyan, cloud/fog grey.
 
-| Symbol | Size | Format | Flash | Note |
-|---|---|---|---|---|
-| `car_top` | 40 x 64 | RGB565A8 | 7.7 kB | cyan gradient body, dark glass, mirrors — colour baked in |
-| `lane_dash` | 2 x 14 | A8 | 28 B | side markings, soft ends; recoloured to `HUD_C_LANE` |
-| `lane_dash_center` | 1 x 8 | A8 | 8 B | faint centre line; recoloured to `HUD_C_LINE` |
+## Speed limit sign
+75 px disc with an 8 px red ring and a 39 px number - 1.7x the original 44 px
+sign, and now the largest element on the left. The current speed drops to
+`HUD_F_SPEED_SM` (50 px) with `km/h` on its own line beneath it so the two
+still fit the 140 px content width; the sign row is 88 px tall, which is why
+the road-sign and forecast rows below it shifted down 14 px.
 
-Two `lv_anim`s drive it, no frame sequence: the three dash tracks are 2x the
-panel height and translate up by one `HUD_LANE_PERIOD` (30 px) in 1100 ms on
-infinite repeat, so the loop is seamless; the car sways +/- `HUD_CAR_SWAY`
-(3 px) over 3400 ms with `lv_anim_path_ease_in_out`. Speed of the road reads
-as motion, so tie the 1100 ms to real speed if you want:
-`lv_anim_set_duration(&lane_anim, 60000 / kmh)`.
+## Map view
+`map_tile` (full-height, no route) and `map_tile_nav` (159 x 108 inset, shown
+during navigation) are separate images. Only `map_tile_nav` carries a bright
+cyan route ahead of the vehicle - that is guidance and belongs to navigation.
+`map_tile` has the dashed breadcrumb only, ending at the marker, so the
+no-navigation view never draws a path the driver has not taken.
+`map_arrow` is the position marker at
+`HUD_MAP_POS_X/Y` (60, 178); it rotates about its own centre via
+`hud_map_set_heading()`. The travelled path is a thin dashed cyan breadcrumb,
+deliberately quieter than the navigation route so the two views don't read
+alike.
 
-Re-render `car_top` at a different size by editing
-`assets/png/car_top.png` and re-running the converter; keep RGB565A8 if you
-want the gradient, or switch to A8 and recolour if you prefer a flat car.
+**Both tiles are schematic, not real geography.** `map_tile` is 169x240
+(79 kB flash) and `map_tile_nav` is 159x108 (33.5 kB), both with an invented
+road grid, shipped so the view has something to show. It does not correspond to any real place, which is why
+`hud_map_set_street()` starts empty rather than naming a street the geometry
+does not match. Replace it before shipping, one of:
+
+1. **Vector road data on device** - the honest option. Load a clipped road
+   network for your region (OSM extract converted to a compact binary of line
+   segments in local coordinates), then draw it per frame with `lv_line` or
+   into an `lv_canvas`. Drop `map_tile` and reclaim the 79 kB.
+2. **Raster tiles from a companion app** - phone or head unit fetches the tile
+   and pushes a 169x240 RGB565 buffer over the link; `lv_image_set_src()` on
+   `map_bg` with a runtime `lv_image_dsc_t`. Needs the tile provider's
+   attribution shown somewhere in the product.
+
+Online tile services cannot be used offline on the MCU, so option 1 is the
+only one that works with no connectivity.
 
 ## Not included
 - No display-driver tuning for a specific panel (TFT_eSPI `User_Setup.h` is yours).

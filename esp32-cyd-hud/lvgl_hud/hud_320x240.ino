@@ -41,8 +41,22 @@ void setup()
     /* demo state - replace with your GPS / OBD feed */
     hud_set_speed_limit(60);
     hud_set_speed(62);
-    hud_set_warning(0, HUD_WARN_SPEEDCAM, 400);
-    hud_set_warning(1, HUD_WARN_PEDESTRIAN, 1200);
+
+    /* two upcoming road signs, slot 0 = nearest (pulses) */
+    hud_set_sign(0, HUD_SIGN_SPEEDCAM, 400);
+    hud_set_sign(1, HUD_SIGN_PEDESTRIAN, 1200);
+
+    /* 5-day forecast, day 0 = today */
+    hud_set_forecast(0, "NAY", HUD_WX_SUN,    33);
+    hud_set_forecast(1, "T6",  HUD_WX_PARTLY, 31);
+    hud_set_forecast(2, "T7",  HUD_WX_RAIN,   28);
+    hud_set_forecast(3, "CN",  HUD_WX_STORM,  27);
+    hud_set_forecast(4, "T2",  HUD_WX_SUN,    32);
+
+    /* map view is the default; set its captions */
+    hud_map_set_street("");        /* feed the real street from your GPS source */
+    hud_map_set_scale("200 m");
+    hud_map_set_heading(0);        /* rotates the marker in both map views */
 
     hud_nav_t nav = {
         .turn = HUD_TURN_RIGHT, .dist_m = 300,
@@ -51,7 +65,7 @@ void setup()
         .remain_100m = 84, .eta_min = 12, .arrive_hhmm = "14:32",
     };
     hud_set_nav(&nav);
-    /* hud_nav_stop();  -> lane-keeping animation */
+    /* hud_nav_stop();  -> map view */
 }
 
 void loop()

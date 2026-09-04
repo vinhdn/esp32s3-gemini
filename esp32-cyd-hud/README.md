@@ -53,11 +53,43 @@ pio device monitor       # xem log (115200 baud)
 - `include/hud_state.h` / `src/hud_state.cpp` — struct dữ liệu dùng chung
   (mirror frame VMSX), bảo vệ bằng mutex FreeRTOS.
 - `src/ble_server.cpp` — GATT server NimBLE, parse frame `VMSX`/`VMSL`/`VHUD`
-  y hệt `esp32/main/ble/waze_hud_ble.c` (board S3) để tương thích ngược.
+  y hệt `esp32/main/ble/waze_hud_ble.c` (board S3) để tương thích ngược, cộng
+  thêm `VWXF` (dự báo 5 ngày, xem dưới).
 - `src/ui.cpp` — display driver (TFT_eSPI làm backend LVGL) + toàn bộ giao
   diện HUD.
 - `src/main.cpp` — 1 task FreeRTOS riêng chạy LVGL (core 1); callback BLE
   chạy trên task của NimBLE — 2 bên đồng bộ qua `hud_state_lock()`.
+
+## Dự báo 5 ngày (frame `VWXF`)
+
+Độc lập hoàn toàn với VietMap/VMSX — Android (`WeatherManager.kt` trong
+`android_car_nav`) tự fetch Open-Meteo (5 ngày) và gửi qua BLE theo chu kỳ
+riêng (`startIndependentBleUpdates()`, khởi động trong
+`BleForegroundService.onCreate()`), không phụ thuộc
+`VietmapAccessibilityService` có bắt được bong bóng VietMap hay không.
+
+Frame `VWXF` v1 (17 byte, 5 ngày): `magic(4)="VWXF" version(1)=1
+dayCount(1)=5 [temp:int8, condition:uint8]×5 checksum(1)=XOR`. `condition`
+dùng chung thang 0=nắng,1=mây,2=mưa,3=giông,4=tuyết/sương với VMSX. Parse ở
+`parse_vwxf()` trong `ble_server.cpp`, lưu vào `hud_state_t.forecast_*`
+(mảng riêng, không đụng `today_/tomorrow_weather_*` cũ vẫn gắn với VMSX).
+
+Hiển thị: 5 cột cuối cột trái (`hud_set_forecast()` trong `hud_ui.c`), nhãn
+cố định "NAY/MAI/+2/+3/+4" (board không có RTC nên không tự biết thứ mấy),
+chưa có icon riêng (chưa có asset trong build này) — màu số nhiệt độ đổi
+theo `condition` thay cho glyph.
+
+## Offline map (đang phát triển, chưa wire vào build này)
+
+`offline_map/` + `tools/map_pipeline/` + `map_data/` — bản đồ vector
+roads-only offline, đọc từ microSD, xem `OFFLINE_MAP_FEATURE.md` cho spec
+đầy đủ. Đã có: pipeline Python (OSM → `map.idx`/`map.bin`, đã chạy thử cho
+Hoàn Kiếm), `Projection`/`TileParser`/`TileStore` + unit test native, và một
+`BlePositionProvider` (điện thoại gửi GPS qua BLE, board chỉ render — spec
+mục 9). Chưa có: `MapRenderer`/`HudOverlay` (cần vẽ trực tiếp trên board
+thật để verify), và chưa wire vào `src/main.cpp` nào — xem
+`offline_map/README.md` mục "What's NOT here" cho danh sách đầy đủ phần còn
+thiếu và lý do.
 
 ## Giới hạn v1 (có thể mở rộng sau)
 
