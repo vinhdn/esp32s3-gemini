@@ -35,28 +35,47 @@
 #define HUD_FONTS_STUB 0
 
 #if HUD_FONTS_STUB
-  #define HUD_F_SPEED   &lv_font_montserrat_48
-  #define HUD_F_DIST    &lv_font_montserrat_38
-  #define HUD_F_LIMIT   &lv_font_montserrat_24
-  #define HUD_F_METRIC  &lv_font_montserrat_16
-  #define HUD_F_TEXT    &lv_font_montserrat_14
-  #define HUD_F_SMALL   &lv_font_montserrat_12
-  #define HUD_F_LABEL   &lv_font_montserrat_10
+  #define HUD_F_SPEED    &lv_font_montserrat_48
+  #define HUD_F_SPEED_SM &lv_font_montserrat_48
+  #define HUD_F_DIST     &lv_font_montserrat_38
+  #define HUD_F_LIMIT    &lv_font_montserrat_24
+  #define HUD_F_LIMIT_LG &lv_font_montserrat_48
+  #define HUD_F_METRIC   &lv_font_montserrat_16
+  #define HUD_F_TEXT     &lv_font_montserrat_20
+  #define HUD_F_SMALL    &lv_font_montserrat_12
+  #define HUD_F_LABEL    &lv_font_montserrat_10
 #else
   LV_FONT_DECLARE(hud_num_62)
+  LV_FONT_DECLARE(hud_num_50)
+  LV_FONT_DECLARE(hud_num_39)
   LV_FONT_DECLARE(hud_num_38)
   LV_FONT_DECLARE(hud_num_24)
   LV_FONT_DECLARE(hud_num_16)
+  LV_FONT_DECLARE(hud_text_20)
   LV_FONT_DECLARE(hud_text_13)
   LV_FONT_DECLARE(hud_text_11)
   LV_FONT_DECLARE(hud_label_9)
-  #define HUD_F_SPEED   &hud_num_62
-  #define HUD_F_DIST    &hud_num_38
-  #define HUD_F_LIMIT   &hud_num_24
-  #define HUD_F_METRIC  &hud_num_16
-  #define HUD_F_TEXT    &hud_text_13
-  #define HUD_F_SMALL   &hud_text_11
-  #define HUD_F_LABEL   &hud_label_9
+  #define HUD_F_SPEED    &hud_num_62
+  /* Speed-limit sign enlarged 1.7x (44->75px) per lvgl_hud design - the
+   * current-speed number shrinks to make room (HUD_F_SPEED_SM, 50px,
+   * km/h wraps to its own line below) and becomes the 2nd-largest element
+   * on the left after the sign itself. */
+  #define HUD_F_SPEED_SM &hud_num_50
+  #define HUD_F_DIST     &hud_num_38
+  #define HUD_F_LIMIT    &hud_num_24
+  #define HUD_F_LIMIT_LG &hud_num_39
+  /* Da tung tang gap doi (hud_num_32) nhung bi DE/CHONG chu voi nhau tren
+   * board that (2 gia tri dai nhu "401 km"+"7h:24p" dinh lien khong cach -
+   * xac nhan qua anh chup that) - REVERT ve hud_num_16 (kich thuoc goc)
+   * theo yeu cau, cong them scroll ngang khi tran (xem metric()). */
+  #define HUD_F_METRIC   &hud_num_16
+  /* Da tung tang x3 (hud_text_39) nhung qua to nen chi hien duoc vai ky tu
+   * ("towar...", xac nhan qua anh chup that) - giam con hud_text_20 (~nua
+   * hud_text_39) theo yeu cau, cho phep xuong dong nhieu dong thay vi
+   * "..." 1 dong (xem build_nav()). */
+  #define HUD_F_TEXT     &hud_text_20
+  #define HUD_F_SMALL    &hud_text_11
+  #define HUD_F_LABEL    &hud_label_9
 #endif
 
 #endif /* HUD_THEME_H */

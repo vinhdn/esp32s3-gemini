@@ -10,7 +10,7 @@
 /* ---------- widget handles ---------- */
 static lv_obj_t *scr;
 static lv_obj_t *lbl_speed, *sign_limit, *lbl_limit;
-static lv_obj_t *warn_box[2], *warn_icon[2], *warn_dist[2];
+static lv_obj_t *warn_box[2], *warn_dist[2];
 static lv_obj_t *warn_icon_canvas[2];
 /* Heap (malloc), khong phai static array - board khong PSRAM, DRAM tinh
  * (BSS) rat han hep (da xac nhan qua build that: static array o day cong
@@ -19,12 +19,10 @@ static uint16_t *warn_icon_canvas_buf[2];
 static lv_obj_t *weather_temp[2], *weather_icon[2];
 
 static lv_obj_t *nav_panel, *nav_icon, *nav_dist, *nav_turn, *nav_street, *nav_hint;
-static lv_obj_t *m_remain, *m_eta, *m_arrive;
+static lv_obj_t *m_remain, *m_eta;
 
 static lv_obj_t *lane_panel, *lane_track[3], *car;
 static lv_anim_t lane_anim, car_anim;
-
-static lv_obj_t *fx_label[5], *fx_temp[5];
 
 static uint16_t cur_speed = 0, cur_limit = 0;
 
@@ -72,51 +70,48 @@ static void build_left(void)
     caption(col, "TỐC ĐỘ");
     lv_obj_align(lv_obj_get_child(col, 0), LV_ALIGN_TOP_LEFT, 0, 0);
 
-    lbl_speed = label(col, "0", HUD_F_SPEED, HUD_C_WHITE);
-    lv_obj_align(lbl_speed, LV_ALIGN_TOP_LEFT, 2, 12);
+    /* Speed-limit sign 1.7x the old 44px disc -> 75px, border 8px (lvgl_hud
+     * design). Speed number drops to HUD_F_SPEED_SM with km/h on its own
+     * line so the pair still fits the ~131px content width. */
+    lbl_speed = label(col, "0", HUD_F_SPEED_SM, HUD_C_WHITE);
+    lv_obj_align(lbl_speed, LV_ALIGN_TOP_LEFT, -2, 24);
 
-    lv_obj_t *unit = label(col, "km/h", HUD_F_SMALL, HUD_C_TEXT_DIM);
-    lv_obj_align_to(unit, lbl_speed, LV_ALIGN_BOTTOM_LEFT, -3, 3);
+    lv_obj_t *unit = label(col, "km/h", HUD_F_LABEL, HUD_C_TEXT_DIM);
+    lv_obj_align(unit, LV_ALIGN_TOP_LEFT, 0, 68);
 
-    /* speed-limit sign: white disc, 5 px red ring */
     sign_limit = plain(col);
-    lv_obj_set_size(sign_limit, 46, 46);
+    lv_obj_set_size(sign_limit, 75, 75);
     lv_obj_align(sign_limit, LV_ALIGN_TOP_RIGHT, 0, 0);
     lv_obj_set_style_radius(sign_limit, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(sign_limit, HUD_C_WHITE, 0);
     lv_obj_set_style_bg_opa(sign_limit, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(sign_limit, HUD_C_RED, 0);
-    lv_obj_set_style_border_width(sign_limit, 5, 0);
-    lbl_limit = label(sign_limit, "--", HUD_F_LIMIT, HUD_C_BG);
+    lv_obj_set_style_border_width(sign_limit, 8, 0);
+    lbl_limit = label(sign_limit, "--", HUD_F_LIMIT_LG, HUD_C_BG);
     lv_obj_center(lbl_limit);
 
     lv_obj_t *hr = plain(col);
     lv_obj_set_size(hr, HUD_LEFT_W - 19, 1);
-    lv_obj_align(hr, LV_ALIGN_TOP_LEFT, 0, 94);
+    lv_obj_align(hr, LV_ALIGN_TOP_LEFT, 0, 88);
     lv_obj_set_style_bg_color(hr, HUD_C_LINE, 0);
     lv_obj_set_style_bg_opa(hr, LV_OPA_COVER, 0);
 
-    lv_obj_t *cap = caption(col, "CẢNH BÁO TIẾP");
-    lv_obj_align(cap, LV_ALIGN_TOP_LEFT, 0, 100);
-
+    /* Bo phan thoi tiet (VWXF 5-ngay) hoan toan (theo yeu cau, "tap trung vao
+     * dan duong") - khong con fx_label/fx_icon/fx_temp/hud_set_forecast()
+     * nua, toan bo khoang trong ben duoi danh cho 2 icon canh bao, tang kich
+     * thuoc x2 (64px, gioi han boi CHIEU RONG cot trai 131px con dung -
+     * 64*2+3px khe = 131, khong the toi x3/96px vi 2 icon canh nhau se vuot
+     * qua be rong cot du co danh het chieu cao). Bo luon caption "CANH BAO
+     * TIEP" (theo yeu cau truoc), icon dat ngay duoi hr voi khe nho. */
     for (int i = 0; i < 2; i++) {
         warn_box[i] = plain(col);
-        lv_obj_set_size(warn_box[i], 63, 70);
-        lv_obj_align(warn_box[i], LV_ALIGN_TOP_LEFT, i * 69, 118);
-        lv_obj_set_style_radius(warn_box[i], 4, 0);
-        lv_obj_set_style_bg_color(warn_box[i], HUD_C_PANEL, 0);
-        lv_obj_set_style_bg_opa(warn_box[i], LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(warn_box[i], HUD_C_BORDER, 0);
-        lv_obj_set_style_border_width(warn_box[i], 1, 0);
+        lv_obj_set_size(warn_box[i], HUD_WARNING_ICON_SIZE, HUD_WARNING_ICON_SIZE + 21);
+        lv_obj_align(warn_box[i], LV_ALIGN_TOP_LEFT, i * (HUD_WARNING_ICON_SIZE + 3), 94);
 
-        warn_icon[i] = lv_image_create(warn_box[i]);
-        lv_image_set_src(warn_icon[i], &icon_speedcam);
-        lv_obj_align(warn_icon[i], LV_ALIGN_TOP_MID, 0, 6);
-        icon_tint(warn_icon[i], HUD_C_TEXT);
-
-        /* Anh icon canh bao THAT (giai ma JPEG tu VietMap Live that, xem
-         * icon_stream.cpp) - de tren warn_icon (che khi co du lieu that qua
-         * hud_set_warning_icon_image(), khong thi giu icon tinh o duoi). */
+        /* Chi hien icon THAT (giai ma JPEG tu VietMap Live that, xem
+         * icon_stream.cpp) qua hud_set_warning_icon_image() - KHONG con icon
+         * SVG mac dinh nao ca (theo yeu cau nguoi dung), neu chua co du lieu
+         * that thi khong hien icon gi, chi hien khoang cach. */
         warn_icon_canvas_buf[i] = (uint16_t *)malloc(
             (size_t)HUD_WARNING_ICON_SIZE * HUD_WARNING_ICON_SIZE * sizeof(uint16_t));
         warn_icon_canvas[i] = lv_canvas_create(warn_box[i]);
@@ -124,50 +119,37 @@ static void build_left(void)
             lv_canvas_set_buffer(warn_icon_canvas[i], warn_icon_canvas_buf[i],
                                   HUD_WARNING_ICON_SIZE, HUD_WARNING_ICON_SIZE, LV_COLOR_FORMAT_RGB565);
         }
-        lv_obj_align(warn_icon_canvas[i], LV_ALIGN_TOP_MID, 0, 2);
+        lv_obj_align(warn_icon_canvas[i], LV_ALIGN_TOP_MID, 0, 0);
         lv_obj_add_flag(warn_icon_canvas[i], LV_OBJ_FLAG_HIDDEN);
 
         warn_dist[i] = label(warn_box[i], "--", HUD_F_SMALL, HUD_C_TEXT);
-        lv_obj_align(warn_dist[i], LV_ALIGN_BOTTOM_MID, 0, -6);
+        lv_obj_align(warn_dist[i], LV_ALIGN_BOTTOM_MID, 0, 0);
 
         lv_obj_add_flag(warn_box[i], LV_OBJ_FLAG_HIDDEN);
     }
-
-    /* Thoi tiet hom nay/ngay mai (VMSX, gan voi VietMap) - 2 cot nho ngay
-     * duoi cum canh bao (warn_box ket thuc o y=118+70=188 tinh trong vung
-     * noi dung da padding): nhiet do phia tren, icon dieu kien phia duoi,
-     * khong chu "Hom nay/Ngay mai". */
-    for (int i = 0; i < 2; i++) {
-        weather_temp[i] = label(col, "--", HUD_F_SMALL, HUD_C_TEXT);
-        lv_obj_align(weather_temp[i], LV_ALIGN_TOP_LEFT, i * 66 + 4, 188);
-
-        weather_icon[i] = lv_image_create(col);
-        lv_image_set_src(weather_icon[i], &icon_weather_sunny);
-        lv_obj_align(weather_icon[i], LV_ALIGN_TOP_LEFT, i * 66, 202);
-        icon_tint(weather_icon[i], HUD_C_TEXT_DIM);
-        lv_obj_add_flag(weather_icon[i], LV_OBJ_FLAG_HIDDEN);
-    }
-
-    /* VWXF 5-day forecast (doc lap VietMap, xem hud_set_forecast() +
-     * ble_server.cpp) KHONG duoc tao widget o day - vung man hinh con lai
-     * duoi warn_box (188..231, ~43px) da gan het bi 2-cot thoi tiet VMSX o
-     * tren chiem (188..226, icon that 24x24) - khong con cho ve them 5 cot
-     * ma khong de len. hud_set_forecast()/hud_clear_forecast() van ton tai
-     * va bien dich duoc (xem cuoi file), nhung KHONG duoc goi tu
-     * ui_refresh() cho toi khi co quyet dinh thiet ke lai layout de hien ca
-     * 2 nguon thoi tiet cung luc. */
 }
 
 /* ---------- navigation half ---------- */
 static lv_obj_t *metric(lv_obj_t *parent, const char *cap_txt, int x, lv_align_t al, lv_color_t vc, lv_obj_t **out_val)
 {
+    bool right = (al == LV_ALIGN_TOP_RIGHT || al == LV_ALIGN_BOTTOM_RIGHT);
     lv_obj_t *g = plain(parent);
-    lv_obj_set_size(g, 56, 28);
+    /* HUD_F_METRIC da revert ve kich thuoc goc (hud_num_16) - 75px rong (con
+     * du tu khi bo "ĐẾN", chia doi 151px content width), 28px cao nhu ban
+     * dau (khong con can 60px). */
+    lv_obj_set_size(g, 75, 28);
     lv_obj_align(g, al, x, 0);
     lv_obj_t *c = caption(g, cap_txt);
-    lv_obj_align(c, al == LV_ALIGN_BOTTOM_RIGHT ? LV_ALIGN_TOP_RIGHT : LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_align(c, right ? LV_ALIGN_TOP_RIGHT : LV_ALIGN_TOP_LEFT, 0, 0);
     *out_val = label(g, "--", HUD_F_METRIC, vc);
-    lv_obj_align(*out_val, al == LV_ALIGN_BOTTOM_RIGHT ? LV_ALIGN_BOTTOM_RIGHT : LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    /* Gia tri qua dai (vd "401 km" + "7h:24p" dinh lien khong cach, xac nhan
+     * qua anh chup that) se de len cot ben canh vi label mac dinh tu rong
+     * theo noi dung, khong bi gioi han boi group 75px - ep rong bang group
+     * roi cho SCROLL NGANG (chay qua lai) khi tran thay vi de/chong chu
+     * (theo yeu cau), khong anh huong gi khi noi dung du ngan (khong scroll). */
+    lv_obj_set_width(*out_val, 75);
+    lv_label_set_long_mode(*out_val, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_obj_align(*out_val, right ? LV_ALIGN_BOTTOM_RIGHT : LV_ALIGN_BOTTOM_LEFT, 0, 0);
     return g;
 }
 
@@ -184,42 +166,47 @@ static void build_nav(void)
     lv_obj_set_pos(nav_panel, HUD_LEFT_W + 1, 0);
     lv_obj_set_style_pad_all(nav_panel, 9, 0);
 
+    /* HUD_F_METRIC da REVERT ve hud_num_16 (kich thuoc goc - ban tang gap doi
+     * truoc lam 2 gia tri dinh lien nhau khong cach, xac nhan qua anh chup
+     * that "401 km7h:24p"). Giu box rong 75px (con du tu khi bo "ĐẾN") nhung
+     * cao lai 28px nhu goc. Them scroll ngang (LONG_SCROLL_CIRCULAR) cho gia
+     * tri qua dai thay vi de tran/de len cot ben canh (theo yeu cau). */
+    metric(nav_panel, "CÒN LẠI", 0,  LV_ALIGN_TOP_LEFT, HUD_C_TEXT, &m_remain);
+    metric(nav_panel, "T.GIAN",  76, LV_ALIGN_TOP_LEFT, HUD_C_TEXT, &m_eta);
+
+    lv_obj_t *hr = plain(nav_panel);
+    lv_obj_set_size(hr, HUD_RIGHT_W - 20, 1);
+    lv_obj_align(hr, LV_ALIGN_TOP_LEFT, 0, 31);
+    lv_obj_set_style_bg_color(hr, HUD_C_LINE, 0);
+    lv_obj_set_style_bg_opa(hr, LV_OPA_COVER, 0);
+
     nav_icon = lv_image_create(nav_panel);
     lv_image_set_src(nav_icon, &icon_turn_right);
-    lv_obj_align(nav_icon, LV_ALIGN_TOP_LEFT, 0, 2);
+    lv_obj_align(nav_icon, LV_ALIGN_TOP_LEFT, 0, 38);
     icon_tint(nav_icon, HUD_C_CYAN);
 
     nav_dist = label(nav_panel, "0 m", HUD_F_DIST, HUD_C_WHITE);
-    lv_obj_align(nav_dist, LV_ALIGN_TOP_LEFT, 60, 4);
+    lv_obj_align(nav_dist, LV_ALIGN_TOP_LEFT, 60, 40);
 
     nav_turn = label(nav_panel, "", HUD_F_LABEL, HUD_C_CYAN);
     lv_obj_set_style_text_letter_space(nav_turn, 1, 0);
-    lv_obj_align(nav_turn, LV_ALIGN_TOP_LEFT, 60, 42);
+    lv_obj_align(nav_turn, LV_ALIGN_TOP_LEFT, 60, 78);
 
+    /* HUD_F_TEXT giam con hud_text_20 (~nua hud_text_39 truoc - qua to chi
+     * hien duoc vai ky tu, xac nhan qua anh chup that "towar..."). Cho phep
+     * XUONG DONG NHIEU DONG (LONG_WRAP, theo yeu cau) thay vi ep 1 dong +
+     * "..." - chieu cao co dinh du 3 dong (line_height=31px, xem hud_text_20.c)
+     * de ten duong dai van doc duoc thay vi bi cat cut ngay tu dau. */
     nav_street = label(nav_panel, "", HUD_F_TEXT, HUD_C_TEXT);
     lv_obj_set_width(nav_street, HUD_RIGHT_W - 20);
-    // LONG_DOT can wrap trước khi rut gon "..." neu khong co CHIEU CAO co
-    // dinh - ten duong dai se tran thanh 2 dong, de len nav_hint ngay ben
-    // duoi (da xac nhan qua bao cao that: "bi ten duong che neu ten duong 2
-    // dong"). Ep 1 dong bang chieu cao dung dung 1 line cua font nay.
-    lv_obj_set_height(nav_street, lv_font_get_line_height(HUD_F_TEXT));
-    lv_label_set_long_mode(nav_street, LV_LABEL_LONG_DOT);
-    lv_obj_align(nav_street, LV_ALIGN_TOP_LEFT, 0, 66);
+    lv_obj_set_height(nav_street, 31 * 3);
+    lv_label_set_long_mode(nav_street, LV_LABEL_LONG_WRAP);
+    lv_obj_align(nav_street, LV_ALIGN_TOP_LEFT, 0, 102);
 
     nav_hint = label(nav_panel, "", HUD_F_SMALL, HUD_C_TEXT_DIM);
     lv_obj_set_width(nav_hint, HUD_RIGHT_W - 20);
     lv_label_set_long_mode(nav_hint, LV_LABEL_LONG_WRAP);
-    lv_obj_align(nav_hint, LV_ALIGN_TOP_LEFT, 0, 86);
-
-    lv_obj_t *hr = plain(nav_panel);
-    lv_obj_set_size(hr, HUD_RIGHT_W - 20, 1);
-    lv_obj_align(hr, LV_ALIGN_BOTTOM_LEFT, 0, -34);
-    lv_obj_set_style_bg_color(hr, HUD_C_LINE, 0);
-    lv_obj_set_style_bg_opa(hr, LV_OPA_COVER, 0);
-
-    metric(nav_panel, "CÒN LẠI", 0,  LV_ALIGN_BOTTOM_LEFT,  HUD_C_TEXT, &m_remain);
-    metric(nav_panel, "T.GIAN",  56, LV_ALIGN_BOTTOM_LEFT,  HUD_C_TEXT, &m_eta); // giu viet tat - cot rong 56px, README goc cung dung "T.GIAN"
-    metric(nav_panel, "ĐẾN",     0,  LV_ALIGN_BOTTOM_RIGHT, HUD_C_CYAN, &m_arrive);
+    lv_obj_align(nav_hint, LV_ALIGN_TOP_LEFT, 0, 102 + 31 * 3 + 3);
 
     lv_obj_add_flag(nav_panel, LV_OBJ_FLAG_HIDDEN);
 }
@@ -345,26 +332,24 @@ void hud_set_warning(uint8_t slot, hud_warn_t w, uint16_t dist_m)
         return;
     }
 
-    const lv_image_dsc_t *src = &icon_roughroad;
-    bool urgent = false;
-    switch (w) {
-        case HUD_WARN_SPEEDCAM:    src = &icon_speedcam;   urgent = true; break;
-        case HUD_WARN_PEDESTRIAN:  src = &icon_pedestrian; break;
-        case HUD_WARN_ROUGH_ROAD:  src = &icon_roughroad;  break;
-        case HUD_WARN_SHARP_CURVE: src = &icon_sharpcurve; break;
-        default: break;
-    }
+    /* Khong con icon SVG mac dinh theo kieu canh bao (HUD_WARN_*) - chi con
+     * dung de quyet dinh mau chu khoang cach (amber cho camera, urgent hon).
+     * Icon THAT (bitmap that tu VietMap) chi hien qua hud_set_warning_icon_image()
+     * rieng, doc lap voi ham nay. */
+    bool urgent = (w == HUD_WARN_SPEEDCAM);
 
     lv_obj_clear_flag(warn_box[slot], LV_OBJ_FLAG_HIDDEN);
-    lv_image_set_src(warn_icon[slot], src);
-    icon_tint(warn_icon[slot], urgent ? HUD_C_AMBER : HUD_C_TEXT);
-    lv_obj_set_style_bg_color(warn_box[slot], urgent ? HUD_C_AMBER_BG : HUD_C_PANEL, 0);
-    lv_obj_set_style_border_color(warn_box[slot], urgent ? HUD_C_AMBER_LINE : HUD_C_BORDER, 0);
     lv_obj_set_style_text_color(warn_dist[slot], urgent ? HUD_C_AMBER : HUD_C_TEXT, 0);
 
+    /* dist_m==0 nghia la VietMap co hien canh bao nhung CHUA uoc luong duoc
+     * khoang cach (man hinh that hien "--" o vi tri nay) - khac voi "khong
+     * co canh bao" (w=HUD_WARN_NONE, an ca box, xu ly o tren). Hien "--"
+     * dung nhu VietMap dang hien, khong phai "0 m" (sai, gay hieu nham la
+     * canh bao ngay truoc mat). */
     char buf[12];
-    if (dist_m >= 1000) snprintf(buf, sizeof(buf), "%u.%u km", dist_m / 1000, (dist_m % 1000) / 100);
-    else                snprintf(buf, sizeof(buf), "%u m", (unsigned)dist_m);
+    if (dist_m == 0)       snprintf(buf, sizeof(buf), "--");
+    else if (dist_m >= 1000) snprintf(buf, sizeof(buf), "%u.%u km", dist_m / 1000, (dist_m % 1000) / 100);
+    else                   snprintf(buf, sizeof(buf), "%u m", (unsigned)dist_m);
     lv_label_set_text(warn_dist[slot], buf);
 }
 
@@ -408,7 +393,7 @@ void hud_set_nav(const hud_nav_t *nav)
     lv_label_set_text(nav_hint,   nav->hint   ? nav->hint   : "");
     lv_label_set_text(m_remain, nav->remain ? nav->remain : "--");
     lv_label_set_text(m_eta, nav->time_remaining ? nav->time_remaining : "--");
-    lv_label_set_text(m_arrive, nav->arrive_hhmm ? nav->arrive_hhmm : "--:--");
+    /* "ĐẾN" (arrive_hhmm) da bo khoi UI (theo yeu cau) - khong con dung. */
 }
 
 void hud_nav_stop(void)
@@ -417,51 +402,12 @@ void hud_nav_stop(void)
     lv_obj_clear_flag(lane_panel, LV_OBJ_FLAG_HIDDEN);
 }
 
-/* NOTE: hud_set_forecast()/hud_clear_forecast() (VWXF 5-day forecast, doc
- * lap voi VietMap) va hud_set_weather() (VMSX 2-day, ben duoi) CUNG muon
- * dung vung man hinh ngay duoi warn_box (y=188..231, chi ~43px). hud_set_weather
- * (icon 24x24 that) da chiem gan het (188..226) - khong con cho de ve them
- * fx_label/fx_temp ma khong de len nhau. Quyet dinh tam thoi: giu
- * hud_set_weather la hien thi CHINH (build_left() o duoi khong tao
- * fx_label/fx_temp nua), hud_set_forecast()/hud_clear_forecast() van bien
- * dich duoc va nhan du lieu VWXF qua BLE (xem ble_server.cpp/hud_state.h)
- * nhung CHUA duoc goi tu ui_refresh() - can quyet dinh thiet ke lai layout
- * (thu nho icon, hoac bo tri lai) truoc khi hien ca 2 cung luc. fx_label/
- * fx_temp o day se la NULL (khong tao trong build_left) - AN TOAN vi khong
- * co code nao goi 2 ham nay hien tai. */
-void hud_set_forecast(uint8_t slot, const char *label_txt, uint8_t condition, int8_t temp_c)
-{
-    if (slot > 4) return;
-    lv_label_set_text(fx_label[slot], label_txt ? label_txt : "");
-
-    /* Khong dung ky hieu "do" (U+00B0) - hud_text_11 chi generate voi tap
-     * ky tu Latin+Viet trong README, khong chac co glyph do, ve o trong neu
-     * thieu. So thuan tuy la an toan nhat. */
-    char buf[8];
-    snprintf(buf, sizeof(buf), "%d", (int)temp_c);
-    lv_label_set_text(fx_temp[slot], buf);
-
-    lv_color_t c;
-    switch (condition) {
-        case 0: c = HUD_C_AMBER; break; /* nang */
-        case 2: c = HUD_C_CYAN;  break; /* mua */
-        case 3: c = HUD_C_AMBER; break; /* giong */
-        case 1:                         /* may */
-        case 4:                         /* tuyet/suong */
-        default: c = HUD_C_TEXT_DIM; break;
-    }
-    lv_obj_set_style_text_color(fx_temp[slot], c, 0);
-}
-
-void hud_clear_forecast(void)
-{
-    for (int i = 0; i < 5; i++) {
-        lv_label_set_text(fx_label[i], "");
-        lv_label_set_text(fx_temp[i], "--");
-        lv_obj_set_style_text_color(fx_temp[i], HUD_C_TEXT, 0);
-    }
-}
-
+/* hud_set_weather() (VMSX 2-day, gan VietMap) van bien dich duoc o duoi
+ * nhung KHONG con duoc goi tu ui_refresh() nua - VWXF (hud_set_forecast(),
+ * doc lap VietMap) la nguon thoi tiet DUY NHAT hien tren HUD theo yeu cau.
+ * weather_temp[]/weather_icon[] van khai bao (hud_set_weather() con dung)
+ * nhung khong con duoc tao trong build_left() - AN TOAN vi khong con code
+ * nao goi hud_set_weather(). */
 static const lv_image_dsc_t *weather_icon_src(hud_weather_t w)
 {
     switch (w) {
@@ -491,10 +437,11 @@ static void set_weather_slot(int i, int8_t temp_c, hud_weather_t cond)
 
 void hud_set_warning_icon_image(uint8_t slot, const uint16_t *rgb565)
 {
+    /* Khong con icon SVG mac dinh de "fallback" ve - chua co bitmap that
+     * (rgb565==NULL) nghia la chi an canvas di, khong hien gi ca. */
     if (slot > 1 || warn_icon_canvas_buf[slot] == NULL) return;
     if (rgb565 == NULL) {
         lv_obj_add_flag(warn_icon_canvas[slot], LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(warn_icon[slot], LV_OBJ_FLAG_HIDDEN);
         return;
     }
     if (rgb565 != warn_icon_canvas_buf[slot]) {
@@ -502,7 +449,6 @@ void hud_set_warning_icon_image(uint8_t slot, const uint16_t *rgb565)
                sizeof(uint16_t) * HUD_WARNING_ICON_SIZE * HUD_WARNING_ICON_SIZE);
     }
     lv_obj_invalidate(warn_icon_canvas[slot]);
-    lv_obj_add_flag(warn_icon[slot], LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(warn_icon_canvas[slot], LV_OBJ_FLAG_HIDDEN);
 }
 

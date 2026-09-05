@@ -57,7 +57,7 @@ void hud_clear_warnings(void);
 
 /* Kich thuoc canvas anh icon canh bao THAT (giai ma tu JPEG board S3 gui -
  * xem icon_stream.cpp) - vuong, RGB565, dung dung kich thuoc nay. */
-#define HUD_WARNING_ICON_SIZE 32
+#define HUD_WARNING_ICON_SIZE 64
 
 /* Thay icon tinh (hud_warn_t) bang anh THAT giai ma duoc (RGB565,
  * HUD_WARNING_ICON_SIZE x HUD_WARNING_ICON_SIZE) - COPY vao buffer rieng cua
@@ -85,17 +85,6 @@ typedef enum {
  * bo cuc on dinh, giong sign_limit). */
 void hud_set_weather(int8_t today_temp_c, hud_weather_t today_cond,
                       int8_t tomorrow_temp_c, hud_weather_t tomorrow_cond);
-
-/* 5-day forecast strip, bottom of the left column. slot 0..4 (0 = today).
- * Frame RIENG "VWXF", doc lap voi VietMap (xem ble_server.cpp) - khac voi
- * hud_set_weather() o tren (van gan voi VMSX/VietMap), 2 duong du lieu nay
- * doc lap, khong ghi de len nhau. condition: 0=nang,1=may,2=mua,3=giong,
- * 4=tuyet/suong (cung thang voi hud_state_t.forecast_condition[] /
- * WeatherManager.kt CONDITION_*). Khong co icon rieng (chua co asset trong
- * build nay) - mau chu tinh theo condition thay cho glyph. label toi da 3
- * ky tu ("NAY", "MAI", "+2"...). */
-void hud_set_forecast(uint8_t slot, const char *label, uint8_t condition, int8_t temp_c);
-void hud_clear_forecast(void);
 
 #ifdef __cplusplus
 }

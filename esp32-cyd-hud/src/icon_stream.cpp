@@ -18,10 +18,23 @@
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <freertos/semphr.h>
 
 #include "hud_ui.h"
 
-static const size_t ICON_MAX_JPEG_SIZE = 2048; // anh nguon that (80x40 q=30) ~1-2KB, du du
+// Bao ve s_out_left/s_out_right + s_icon_ready[] khoi truy cap dong thoi giua
+// decode_task (ghi, khi 1 frame JPEG moi giai ma xong) va ui_refresh() tren
+// lvgl_task (doc, qua icon_stream_take_ready()) - xem chu thich o
+// icon_stream_take_ready() trong icon_stream.h ve ly do can mutex nay (KHONG
+// duoc goi LVGL API tu decode_task nua).
+static SemaphoreHandle_t s_icon_mutex;
+static volatile bool s_icon_ready[2] = { false, false };
+
+// Da tang do phan giai gui sang board (theo yeu cau) - anh nguon gio la
+// 128x64 (2x64 cell) thay vi 80x40 truoc day (~2.56x so pixel), q=30 uoc
+// luong ~4-5KB, dat budget 8KB cho an toan (con ~120KB free heap luc runtime,
+// da xac nhan qua serial that truoc do - du du cho muc tang nay).
+static const size_t ICON_MAX_JPEG_SIZE = 8192;
 
 // ---- Ghep chunk (chay trong context BLE - onWrite) ----
 // Cap phat HEAP (malloc trong icon_stream_init), KHONG phai static array -
@@ -44,10 +57,12 @@ static volatile bool s_decoding = false;
 
 static TaskHandle_t s_decode_task = nullptr;
 
-// Anh nguon la 2 icon ghep canh nhau CUNG RONG (composeAlertIcons: 40x40 moi
-// ben, 80x40 tong) - hardcode theo dung wire format hien tai thay vi tu do
-// giai ma kich thuoc (don gian hon, khop chinh xac protocol dang dung).
-static const uint16_t SRC_HALF_W = 40;
+// Anh nguon la 2 icon ghep canh nhau CUNG RONG (composeAlertIcons: 64x64 moi
+// ben, 128x64 tong - tang tu 40x40/80x40 theo yeu cau tang do phan giai,
+// khop dung HUD_WARNING_ICON_SIZE ben hud_ui.c nen SCALE=1.0, khong upscale
+// mo) - hardcode theo dung wire format hien tai thay vi tu do giai ma kich
+// thuoc (don gian hon, khop chinh xac protocol dang dung).
+static const uint16_t SRC_HALF_W = 64;
 static const float SCALE = (float)HUD_WARNING_ICON_SIZE / (float)SRC_HALF_W;
 
 static uint16_t *s_out_left;
@@ -100,21 +115,24 @@ static void decode_task(void *arg)
 
         size_t size = s_decode_size;
         if (size > 0) {
+            // Giu mutex XUYEN SUOT decode (memset+drawJpg ghi truc tiep vao
+            // s_out_left/right) - tranh ui_refresh() doc dang do trong luc
+            // decode_task dang ghi de cho frame moi (xem icon_stream_take_ready()).
+            xSemaphoreTake(s_icon_mutex, portMAX_DELAY);
             memset(s_out_left, 0, ICON_PIXELS * sizeof(uint16_t));
             memset(s_out_right, 0, ICON_PIXELS * sizeof(uint16_t));
             JRESULT res = TJpgDec.drawJpg(0, 0, s_decode_buf, size);
+            if (res == JDR_OK) {
+                s_icon_ready[0] = true; // camera (nua phai)
+                s_icon_ready[1] = true; // next_limit (nua trai)
+            }
+            xSemaphoreGive(s_icon_mutex);
             s_decoding = false; // xong doc s_decode_buf, cho phep frame moi ghi de
 
             Serial.printf("[icon_stream] TJpgDec.drawJpg xong, res=%d (JDR_OK=%d)\n", (int)res, (int)JDR_OK);
-
             if (res == JDR_OK) {
-                Serial.printf("[icon_stream] Decode OK - mau px[0] trai=0x%04X phai=0x%04X - ve len canvas\n",
+                Serial.printf("[icon_stream] Decode OK - mau px[0] trai=0x%04X phai=0x%04X - cho ui_refresh() lay\n",
                               s_out_left[0], s_out_right[0]);
-                // LEFT nua anh nguon = bien bao gioi han sap toi
-                // (upcoming_alert_left, xem VietmapAccessibilityService.kt) -
-                // trong ui.cpp slot 1 la next_limit, slot 0 la camera.
-                hud_set_warning_icon_image(1, s_out_left);
-                hud_set_warning_icon_image(0, s_out_right);
             }
         } else {
             s_decoding = false;
@@ -171,6 +189,24 @@ bool icon_stream_feed(const uint8_t *data, size_t len)
     return s_assembly_active;
 }
 
+bool icon_stream_take_ready(uint8_t slot, uint16_t *dest)
+{
+    if (slot > 1 || dest == NULL || s_icon_mutex == NULL) return false;
+    bool got = false;
+    if (xSemaphoreTake(s_icon_mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+        if (s_icon_ready[slot]) {
+            // slot 0=camera=nua PHAI anh nguon, slot 1=next_limit=nua TRAI -
+            // dung quy uoc cu (xem decode_task).
+            const uint16_t *src = (slot == 0) ? s_out_right : s_out_left;
+            memcpy(dest, src, ICON_PIXELS * sizeof(uint16_t));
+            s_icon_ready[slot] = false;
+            got = true;
+        }
+        xSemaphoreGive(s_icon_mutex);
+    }
+    return got;
+}
+
 void icon_stream_init()
 {
     s_assembly_buf = (uint8_t *)malloc(ICON_MAX_JPEG_SIZE);
@@ -181,6 +217,7 @@ void icon_stream_init()
         Serial.println("[icon_stream] Khong cap phat duoc buffer - tinh nang icon canh bao that TAT");
         return;
     }
+    s_icon_mutex = xSemaphoreCreateMutex();
 
     TJpgDec.setJpgScale(1);
     // KHONG swap byte o day: canvas nay la bo dem LVGL (LV_COLOR_FORMAT_RGB565)
@@ -191,5 +228,28 @@ void icon_stream_init()
     // luc dang lai xe moi kich hoat duong nay).
     TJpgDec.setCallback(tjpg_output_cb);
 
-    xTaskCreatePinnedToCore(decode_task, "icon_decode", 4096, nullptr, 2, &s_decode_task, 1);
+    // xTaskCreatePinnedToCore() co the that bai ma khong crash (heap da can
+    // kiet sau khi LVGL/NimBLE khoi tao xong - icon_stream_init() goi SAU
+    // ui_init()) - truoc day KHONG kiem tra ket qua nen that bai la SILENT:
+    // s_decode_task = nullptr mai mai, moi frame JPEG sau do bi bo qua vinh
+    // vien (s_frame_ready khong bao gio duoc decode_task dat lai ve false).
+    // Da xac nhan qua serial that: frame_ready=1 lien tuc tren MOI frame.
+    Serial.printf("[icon_stream] free heap truoc khi tao decode_task: %u byte\n",
+                  (unsigned)ESP.getFreeHeap());
+    BaseType_t ok = xTaskCreatePinnedToCore(decode_task, "icon_decode", 4096, nullptr, 2,
+                                             &s_decode_task, 1);
+    if (ok != pdPASS) {
+        Serial.printf("[icon_stream] LOI: tao decode_task that bai (ret=%d) - thu lai voi stack nho hon\n",
+                      (int)ok);
+        // TJpgDec.drawJpg() cho anh 80x40 chi can vai block MCU 8x8/16x16 -
+        // 2048 word (8KB) du du cho callback don gian cua chung ta, giam ap
+        // luc cap phat neu heap dang can.
+        ok = xTaskCreatePinnedToCore(decode_task, "icon_decode", 2048, nullptr, 2,
+                                      &s_decode_task, 1);
+        if (ok != pdPASS) {
+            Serial.printf("[icon_stream] LOI: van khong tao duoc decode_task (ret=%d) - tinh nang icon canh bao that TAT\n",
+                          (int)ok);
+            s_decode_task = nullptr;
+        }
+    }
 }

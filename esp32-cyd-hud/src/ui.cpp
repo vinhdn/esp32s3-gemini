@@ -10,6 +10,7 @@
 #include "board_pins.h"
 #include "hud_state.h"
 #include "hud_ui.h"
+#include "icon_stream.h"
 
 // ============================================================================
 // Display + touch driver (TFT_eSPI lam backend cho LVGL 9.x)
@@ -191,16 +192,26 @@ void ui_refresh()
         hud_set_warning(1, HUD_WARN_NONE, 0);
     }
 
-    hud_set_weather(
-        s.today_temp_c, s.today_weather_valid ? weather_condition_to_icon(s.today_condition) : HUD_WEATHER_NONE,
-        s.tomorrow_temp_c, s.tomorrow_weather_valid ? weather_condition_to_icon(s.tomorrow_condition) : HUD_WEATHER_NONE);
+    // Lay bitmap icon canh bao THAT vua giai ma xong (neu co) TU DAY - tren
+    // lvgl_task, la task DUY NHAT duoc phep dung LVGL API. Truoc day
+    // decode_task (task khac) goi thang ham nay, vi pham thread-safety cua
+    // LVGL -> chi hien dung lan dau, cac lan sau khong update (xac nhan qua
+    // bao cao that). scratch dung CHUNG cho 2 slot (goi tuan tu, khong dong
+    // thoi) de khong can 2 buffer rieng - HEAP (malloc lazy lan dau), KHONG
+    // phai static: static 8192 byte o day lam DRAM tran ~4.3KB (xac nhan qua
+    // build that), giong het ly do s_out_left/right ben icon_stream.cpp
+    // cung phai dung heap.
+    static uint16_t *s_icon_scratch = nullptr;
+    if (!s_icon_scratch) s_icon_scratch = (uint16_t *)malloc(HUD_WARNING_ICON_SIZE * HUD_WARNING_ICON_SIZE * sizeof(uint16_t));
+    if (s_icon_scratch) {
+        if (icon_stream_take_ready(0, s_icon_scratch)) hud_set_warning_icon_image(0, s_icon_scratch);
+        if (icon_stream_take_ready(1, s_icon_scratch)) hud_set_warning_icon_image(1, s_icon_scratch);
+    }
 
-    // VWXF 5-day forecast (doc lap VietMap) nhan du lieu qua BLE vao
-    // g_hud_state.forecast_* binh thuong (xem ble_server.cpp), nhung KHONG
-    // goi hud_set_forecast() o day - build_left() trong hud_ui.c chua co
-    // cho de ve them 5 cot ma khong de len 2-cot thoi tiet VMSX o tren (xem
-    // comment trong build_left()). Can quyet dinh thiet ke lai layout truoc
-    // khi bat hien thi nay.
+    // Bo hien thi thoi tiet (VWXF 5-ngay) hoan toan (theo yeu cau, "tap trung
+    // vao dan duong") - g_hud_state.forecast_* van duoc parse_vwxf() dien vao
+    // (xem ble_server.cpp) nhung khong con tieu thu o day nua, an toan vi
+    // khong anh huong gi den cac truong khac.
 
     if (s.nav_active) {
         hud_nav_t nav = {};

@@ -5,7 +5,7 @@ Left column 150 px (speed + limit sign + 2 upcoming road signs + 5-day
 forecast), 1 px divider, right half 169 px. Horizontal padding is 5 px
 throughout (`PAD` in `hud_ui.c`).
 
-The map is present in **both** modes: a 159 x 108 inset in navigation (below the
+The map is present in **both** modes: a 159 x 136 inset in navigation (below the
 manoeuvre block, running to the bottom edge) and full-height when no route is active.
 
 ## Files
@@ -133,7 +133,7 @@ still fit the 140 px content width; the sign row is 88 px tall, which is why
 the road-sign and forecast rows below it shifted down 14 px.
 
 ## Map view
-`map_tile` (full-height, no route) and `map_tile_nav` (159 x 108 inset, shown
+`map_tile` (full-height, no route) and `map_tile_nav` (159 x 136 inset, shown
 during navigation) are separate images. Only `map_tile_nav` carries a bright
 cyan route ahead of the vehicle - that is guidance and belongs to navigation.
 `map_tile` has the dashed breadcrumb only, ending at the marker, so the
@@ -145,7 +145,7 @@ deliberately quieter than the navigation route so the two views don't read
 alike.
 
 **Both tiles are schematic, not real geography.** `map_tile` is 169x240
-(79 kB flash) and `map_tile_nav` is 159x108 (33.5 kB), both with an invented
+(79 kB flash) and `map_tile_nav` is 159x136 (42 kB), both with an invented
 road grid, shipped so the view has something to show. It does not correspond to any real place, which is why
 `hud_map_set_street()` starts empty rather than naming a street the geometry
 does not match. Replace it before shipping, one of:

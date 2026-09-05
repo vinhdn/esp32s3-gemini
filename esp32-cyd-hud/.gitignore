@@ -1,3 +1,21 @@
 .pio/
 .vscode/
 compile_commands.json
+
+# Du lieu ban do offline sinh ra tu tools/map_pipeline - lon (chuc chuc MB),
+# khong nen nam trong git history.
+map_data_vn/
+
+# Du lieu OSM tai ve (vd vietnam-latest.osm.pbf, ~300MB) va cache Python -
+# input/output cua tools/map_pipeline, khong phai source code.
+tools/map_pipeline/downloads/
+tools/map_pipeline/__pycache__/
+**/__pycache__/
+
+# TTF nguon (Barlow Condensed, Chakra Petch) chi dung de generate cac file
+# font .c bang lv_font_conv - ban than file .c sinh ra da duoc commit,
+# khong can giu TTF goc trong repo.
+src/fonts/_ttf_src/
+
+# Debug artifact tam thoi (uiautomator dump).
+ui_dump.xml
